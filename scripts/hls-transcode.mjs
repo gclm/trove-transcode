@@ -1,25 +1,21 @@
 /**
- * Trove HLS transcode pipeline.
+ * Trove HLS transcode pipeline (R2-staged uploads).
  *
- * Flow: download source from R2 via a pre-signed GET URL -> ffmpeg HLS 6s
- * segments (copy when H.264/AAC, transcode otherwise) -> upload every .ts
- * segment to Telegram -> POST /api/hls/register. The Worker deletes the R2
- * source copy after a successful register (Actions never gets R2 write access).
+ * Flow: download source from R2 via the Worker's authenticated 302 ->
+ * shared pipeline (probe / ffmpeg HLS / Telegram upload / register).
+ * The Worker deletes the R2 source copy after a successful register.
  *
  * No R2 credentials live in this public repo: the Worker signs short-lived
- * URLs and passes them in the repository_dispatch payload.
+ * URLs and hands them out only through /api/source/<id>/download.
  *
  * Required env:
  *   SOURCE_ID, SOURCE_NAME, API_BASE, TROVE_API_KEY
  *   TG_API_ID, TG_API_HASH, TG_BOT_TOKEN, TG_CHANNEL
- *   TROVE_API_KEY (legacy X-Api-Key of the Worker)
  */
-import { TelegramClient } from "telegram";
-import { StringSession } from "telegram/sessions/index.js";
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { createPipeline } from "./lib/pipeline.mjs";
 
 const env = process.env;
 const need = (k) => {
@@ -32,7 +28,6 @@ const SOURCE_ID = need("SOURCE_ID");
 const SOURCE_NAME = env.SOURCE_NAME || "video.mp4";
 const API_BASE = need("API_BASE").replace(/\/+$/, "");
 const API_KEY = need("TROVE_API_KEY");
-
 const TG_API_ID = Number(need("TG_API_ID"));
 const TG_API_HASH = need("TG_API_HASH");
 const TG_BOT_TOKEN = need("TG_BOT_TOKEN");
@@ -46,23 +41,19 @@ function log(...args) {
   console.log(`[trove-hls ${new Date().toISOString()}]`, ...args);
 }
 
-function run(cmd, args, opts = {}) {
-  log(cmd, args.join(" "));
-  return execFileSync(cmd, args, { stdio: "inherit", maxBuffer: 64 * 1024 * 1024, ...opts });
-}
-
-async function report(patch) {
-  try {
-    const res = await fetch(`${API_BASE}/api/hls/status`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Api-Key": API_KEY },
-      body: JSON.stringify({ sourceId: SOURCE_ID, ...patch }),
-    });
-    log("status report", res.status, await res.text().then((t) => t.slice(0, 300)));
-  } catch (e) {
-    log("status report failed", e?.message || e);
-  }
-}
+const pipeline = createPipeline({
+  sourceId: SOURCE_ID,
+  sourceName: SOURCE_NAME,
+  apiBase: API_BASE,
+  apiKey: API_KEY,
+  tgApiId: TG_API_ID,
+  tgApiHash: TG_API_HASH,
+  tgBotToken: TG_BOT_TOKEN,
+  tgChannel: TG_CHANNEL,
+  workDir,
+  outDir,
+  log,
+});
 
 async function downloadSource() {
   // Authenticated endpoint; the Worker answers 302 to a short-lived presigned URL.
@@ -78,220 +69,24 @@ async function downloadSource() {
   log("downloaded", buf.length, "bytes");
 }
 
-function probe() {
-  const raw = execFileSync("ffprobe", [
-    "-v", "error", "-print_format", "json", "-show_format", "-show_streams", srcPath,
-  ], { maxBuffer: 16 * 1024 * 1024 }).toString();
-  const p = JSON.parse(raw);
-  const video = p.streams.find((s) => s.codec_type === "video");
-  const audio = p.streams.find((s) => s.codec_type === "audio");
-  if (!video) throw new Error("source has no video stream");
-  return {
-    duration: Number(p.format?.duration) || 0,
-    width: Number(video.width) || null,
-    height: Number(video.height) || null,
-    videoCodec: video.codec_name || "",
-    audioCodec: audio?.codec_name || "",
-    hasAudio: !!audio,
-  };
-}
-
-function transcode(info) {
-  fs.mkdirSync(outDir, { recursive: true });
-  const args = ["-y", "-hide_banner", "-i", srcPath];
-  const copyVideo = info.videoCodec === "h264";
-  const copyAudio = !info.hasAudio || info.audioCodec === "aac";
-
-  if (copyVideo) {
-    args.push("-c:v", "copy");
-  } else {
-    args.push("-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p");
-  }
-  if (copyAudio) {
-    args.push("-c:a", "copy");
-  } else {
-    args.push("-c:a", "aac", "-b:a", "128k");
-  }
-  args.push(
-    "-f", "hls",
-    "-hls_time", "10",
-    "-hls_playlist_type", "vod",
-    "-hls_flags", "independent_segments",
-    "-hls_segment_filename", path.join(outDir, `src-${SOURCE_ID.slice(0, 8)}-%05d.ts`),
-    path.join(outDir, "index.m3u8"),
-  );
-  run("ffmpeg", args);
-  log("ffmpeg done", copyVideo ? "(video copy)" : `(transcoded ${info.videoCodec} -> h264)`);
-}
-
-function parseSegments() {
-  const text = fs.readFileSync(path.join(outDir, "index.m3u8"), "utf8");
-  const list = [];
-  let duration = null;
-  for (const raw of text.split("\n")) {
-    const line = raw.trim();
-    const m = /^#EXTINF:([\d.]+)/.exec(line);
-    if (m) { duration = Number(m[1]); continue; }
-    if (duration !== null && line && !line.startsWith("#")) {
-      list.push({ file: path.join(outDir, line), duration });
-      duration = null;
-    }
-  }
-  if (!list.length) throw new Error("ffmpeg produced no HLS segments");
-  return list;
-}
-
-function makePoster() {
-  const poster = path.join(workDir, "poster.jpg");
-  const args = ["-y", "-v", "error", "-ss", "1", "-i", srcPath, "-frames:v", "1", "-vf", "scale=480:-2", "-q:v", "3", poster];
-  try {
-    execFileSync("ffmpeg", args);
-    if (!fs.existsSync(poster) || fs.statSync(poster).size === 0) {
-      execFileSync("ffmpeg", ["-y", "-v", "error", "-ss", "0", "-i", srcPath, "-frames:v", "1", "-vf", "scale=480:-2", "-q:v", "3", poster]);
-    }
-    log(`poster ${fs.statSync(poster).size} bytes`);
-    return poster;
-  } catch (e) {
-    log("poster failed:", e?.message || e);
-    return null;
-  }
-}
-
-async function uploadToTelegram(segs, posterPath) {
-  const client = new TelegramClient(new StringSession(""), TG_API_ID, TG_API_HASH, {
-    connectionRetries: 5,
-    autoReconnect: false,
-  });
-  client.setLogLevel("error");
-  // Bot authorization is rate-limited by Telegram (auth.ImportBotAuthorization);
-  // back off and retry instead of failing the whole job.
-  for (let attempt = 1; attempt <= 6; attempt++) {
-    try {
-      await client.start({ botAuthToken: TG_BOT_TOKEN });
-      break;
-    } catch (e) {
-      const msg = String(e?.message || e);
-      const m = msg.match(/wait of (\d+) seconds/);
-      if (m && attempt < 6) {
-        const wait = Number(m[1]) + 5;
-        log(`telegram auth flood-wait ${wait}s (attempt ${attempt})`);
-        await new Promise((r) => setTimeout(r, wait * 1000));
-        continue;
-      }
-      throw e;
-    }
-  }
-  log("telegram connected as bot");
-
-  // v4: the original file is uploaded as ONE message (MTProto allows 2GB for bots,
-  // unlike the Bot API 50MB limit). Its message id becomes the file mid, so
-  // /dl/m/<mid> serves the original download without any extra mapping.
-  let sourceMid = null;
-  const srcSize = fs.statSync(srcPath).size;
-  for (let attempt = 1; attempt <= 4; attempt++) {
-    try {
-      const msg = await client.sendFile(TG_CHANNEL, {
-        file: srcPath,
-        forceDocument: true,
-        workers: 4,
-        caption: `${SOURCE_NAME} · 原文件`,
-      });
-      sourceMid = msg.id;
-      break;
-    } catch (e) {
-      log(`upload source attempt ${attempt} failed: ${e?.message || e}`);
-      if (attempt === 4) throw e;
-      await new Promise((r) => setTimeout(r, 3000 * attempt));
-    }
-  }
-  log(`source uploaded (mid=${sourceMid}, ${srcSize} bytes)`);
-  let posterMid = null;
-  if (posterPath) {
-    for (let attempt = 1; attempt <= 3 && !posterMid; attempt++) {
-      try {
-        const pm = await client.sendFile(TG_CHANNEL, { file: posterPath, forceDocument: true, workers: 2, caption: "poster" });
-        posterMid = pm.id;
-      } catch (e) {
-        log(`poster upload attempt ${attempt} failed: ${e?.message || e}`);
-        if (attempt < 3) await new Promise((r) => setTimeout(r, 2000 * attempt));
-      }
-    }
-    log(`poster uploaded (mid=${posterMid})`);
-  }
-  await report({ status: "uploading_tg", message: `source uploaded, segments 0/${segs.length}` });
-
-  // v4: send up to 10 HLS segments per sendMediaGroup request (SendMultiMedia),
-  // cutting the number of API calls by 10x.
-  const uploaded = [];
-  const BATCH = 10;
-  for (let i = 0; i < segs.length; i += BATCH) {
-    const chunk = segs.slice(i, i + BATCH);
-    let msgs = null;
-    for (let attempt = 1; attempt <= 4; attempt++) {
-      try {
-        msgs = await client.sendFile(TG_CHANNEL, {
-          file: chunk.map((x) => x.file),
-          forceDocument: true,
-          workers: 4,
-        });
-        break;
-      } catch (e) {
-        log(`upload batch ${i} attempt ${attempt} failed: ${e?.message || e}`);
-        if (attempt === 4) throw e;
-        await new Promise((r) => setTimeout(r, 3000 * attempt));
-      }
-    }
-    if (!Array.isArray(msgs)) msgs = [msgs];
-    for (let j = 0; j < chunk.length; j++) {
-      uploaded.push({ seq: i + j, tg_mid: msgs[j].id, size: fs.statSync(chunk[j].file).size, duration: chunk[j].duration });
-    }
-    log(`segments ${i + chunk.length}/${segs.length} uploaded`);
-    await report({ status: "uploading_tg", message: `${i + chunk.length}/${segs.length} segments`, progress: { done: i + chunk.length, total: segs.length } });
-  }
-  await client.disconnect().catch(() => {});
-  return { uploaded, sourceMid, sourceSize: srcSize, posterMid };
-}
-
-async function register(info, segs, sourceMid, sourceSize, posterMid) {
-  const res = await fetch(`${API_BASE}/api/hls/register`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Api-Key": API_KEY },
-    body: JSON.stringify({
-      sourceId: SOURCE_ID,
-      mid: sourceMid,
-      size: sourceSize,
-      posterMid,
-      name: SOURCE_NAME,
-      mime: "video/mp4",
-      duration: info.duration,
-      width: info.width,
-      height: info.height,
-      segments: segs,
-    }),
-  });
-  const text = await res.text();
-  log("register", res.status, text.slice(0, 500));
-  if (!res.ok) throw new Error(`register failed: HTTP ${res.status} ${text}`);
-}
-
 async function main() {
-  await report({ status: "downloading", message: "workflow started" });
+  await pipeline.report({ status: "downloading", message: "workflow started" });
   try {
     await downloadSource();
-    await report({ status: "transcoding", message: "source downloaded" });
-    const info = probe();
+    await pipeline.report({ status: "transcoding", message: "source downloaded" });
+    const info = pipeline.probe(srcPath);
     log("probe", JSON.stringify(info));
-    transcode(info);
-    const posterPath = makePoster();
-    const segs = parseSegments();
+    pipeline.transcode(srcPath, info);
+    const posterPath = pipeline.makePoster(srcPath);
+    const segs = pipeline.parseSegments();
     log("segments", segs.length);
-    await report({ status: "uploading_tg", message: `0/${segs.length} segments` });
-    const { uploaded, sourceMid, sourceSize, posterMid } = await uploadToTelegram(segs, posterPath);
-    await register(info, uploaded, sourceMid, sourceSize, posterMid);
+    await pipeline.report({ status: "uploading_tg", message: `0/${segs.length} segments` });
+    const { uploaded, sourceMid, sourceSize, posterMid } = await pipeline.uploadToTelegram(srcPath, segs, posterPath);
+    await pipeline.register(info, uploaded, sourceMid, sourceSize, posterMid);
     log("DONE");
   } catch (e) {
     log("FAILED", e?.stack || e?.message || e);
-    await report({ status: "error", error: String(e?.message || e).slice(0, 1000) });
+    await pipeline.report({ status: "error", error: String(e?.message || e).slice(0, 1000) });
     process.exitCode = 1;
   } finally {
     try { fs.rmSync(workDir, { recursive: true, force: true }); } catch {}
