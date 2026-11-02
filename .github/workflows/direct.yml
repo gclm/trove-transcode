@@ -1,0 +1,29 @@
+name: Trove Direct Upload
+on:
+  repository_dispatch:
+    types: [trove-direct]
+permissions:
+  contents: read
+concurrency: trove-direct-${{ github.event.client_payload.sourceId }}
+jobs:
+  direct:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Upload file to Telegram
+        run: node scripts/direct-upload.mjs
+        env:
+          SOURCE_ID: ${{ github.event.client_payload.sourceId }}
+          SOURCE_NAME: ${{ github.event.client_payload.sourceName }}
+          API_BASE: ${{ secrets.TROVE_API_BASE }}
+          TROVE_API_KEY: ${{ secrets.TROVE_API_KEY }}
+          TG_API_ID: ${{ secrets.TG_API_ID }}
+          TG_API_HASH: ${{ secrets.TG_API_HASH }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHANNEL: ${{ secrets.TG_CHANNEL }}

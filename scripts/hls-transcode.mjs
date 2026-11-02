@@ -141,7 +141,23 @@ function parseSegments() {
   return list;
 }
 
-async function uploadToTelegram(segs) {
+function makePoster() {
+  const poster = path.join(workDir, "poster.jpg");
+  const args = ["-y", "-v", "error", "-ss", "1", "-i", srcPath, "-frames:v", "1", "-vf", "scale=480:-2", "-q:v", "3", poster];
+  try {
+    execFileSync("ffmpeg", args);
+    if (!fs.existsSync(poster) || fs.statSync(poster).size === 0) {
+      execFileSync("ffmpeg", ["-y", "-v", "error", "-ss", "0", "-i", srcPath, "-frames:v", "1", "-vf", "scale=480:-2", "-q:v", "3", poster]);
+    }
+    log(`poster ${fs.statSync(poster).size} bytes`);
+    return poster;
+  } catch (e) {
+    log("poster failed:", e?.message || e);
+    return null;
+  }
+}
+
+async function uploadToTelegram(segs, posterPath) {
   const client = new TelegramClient(new StringSession(""), TG_API_ID, TG_API_HASH, {
     connectionRetries: 5,
     autoReconnect: false,
@@ -189,6 +205,19 @@ async function uploadToTelegram(segs) {
     }
   }
   log(`source uploaded (mid=${sourceMid}, ${srcSize} bytes)`);
+  let posterMid = null;
+  if (posterPath) {
+    for (let attempt = 1; attempt <= 3 && !posterMid; attempt++) {
+      try {
+        const pm = await client.sendFile(TG_CHANNEL, { file: posterPath, forceDocument: true, workers: 2, caption: "poster" });
+        posterMid = pm.id;
+      } catch (e) {
+        log(`poster upload attempt ${attempt} failed: ${e?.message || e}`);
+        if (attempt < 3) await new Promise((r) => setTimeout(r, 2000 * attempt));
+      }
+    }
+    log(`poster uploaded (mid=${posterMid})`);
+  }
   await report({ status: "uploading_tg", message: `source uploaded, segments 0/${segs.length}` });
 
   // v4: send up to 10 HLS segments per sendMediaGroup request (SendMultiMedia),
@@ -220,10 +249,10 @@ async function uploadToTelegram(segs) {
     await report({ status: "uploading_tg", message: `${i + chunk.length}/${segs.length} segments`, progress: { done: i + chunk.length, total: segs.length } });
   }
   await client.disconnect().catch(() => {});
-  return { uploaded, sourceMid, sourceSize: srcSize };
+  return { uploaded, sourceMid, sourceSize: srcSize, posterMid };
 }
 
-async function register(info, segs, sourceMid, sourceSize) {
+async function register(info, segs, sourceMid, sourceSize, posterMid) {
   const res = await fetch(`${API_BASE}/api/hls/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Api-Key": API_KEY },
@@ -231,6 +260,7 @@ async function register(info, segs, sourceMid, sourceSize) {
       sourceId: SOURCE_ID,
       mid: sourceMid,
       size: sourceSize,
+      posterMid,
       name: SOURCE_NAME,
       mime: "video/mp4",
       duration: info.duration,
@@ -252,11 +282,12 @@ async function main() {
     const info = probe();
     log("probe", JSON.stringify(info));
     transcode(info);
+    const posterPath = makePoster();
     const segs = parseSegments();
     log("segments", segs.length);
     await report({ status: "uploading_tg", message: `0/${segs.length} segments` });
-    const { uploaded, sourceMid, sourceSize } = await uploadToTelegram(segs);
-    await register(info, uploaded, sourceMid, sourceSize);
+    const { uploaded, sourceMid, sourceSize, posterMid } = await uploadToTelegram(segs, posterPath);
+    await register(info, uploaded, sourceMid, sourceSize, posterMid);
     log("DONE");
   } catch (e) {
     log("FAILED", e?.stack || e?.message || e);
