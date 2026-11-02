@@ -10,7 +10,7 @@
  * URLs and passes them in the repository_dispatch payload.
  *
  * Required env:
- *   SOURCE_ID, SOURCE_GET_URL, SOURCE_NAME, API_BASE
+ *   SOURCE_ID, SOURCE_NAME, API_BASE, TROVE_API_KEY
  *   TG_API_ID, TG_API_HASH, TG_BOT_TOKEN, TG_CHANNEL
  *   TROVE_API_KEY (legacy X-Api-Key of the Worker)
  */
@@ -29,7 +29,6 @@ const need = (k) => {
 };
 
 const SOURCE_ID = need("SOURCE_ID");
-const SOURCE_GET_URL = need("SOURCE_GET_URL");
 const SOURCE_NAME = env.SOURCE_NAME || "video.mp4";
 const API_BASE = need("API_BASE").replace(/\/+$/, "");
 const API_KEY = need("TROVE_API_KEY");
