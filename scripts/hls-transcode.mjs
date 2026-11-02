@@ -15,7 +15,7 @@
  *   TROVE_API_KEY (legacy X-Api-Key of the Worker)
  */
 import { TelegramClient } from "telegram";
-import { StringSession } from "telegram/sessions";
+import { StringSession } from "telegram/sessions/index.js";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
