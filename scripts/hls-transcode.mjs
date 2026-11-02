@@ -203,16 +203,17 @@ async function uploadToTelegram(segs) {
     await report({ status: "uploading_tg", message: `${i + chunk.length}/${segs.length} segments`, progress: { done: i + chunk.length, total: segs.length } });
   }
   await client.disconnect().catch(() => {});
-  return { uploaded, sourceMid };
+  return { uploaded, sourceMid, sourceSize: srcSize };
 }
 
-async function register(info, segs, sourceMid) {
+async function register(info, segs, sourceMid, sourceSize) {
   const res = await fetch(`${API_BASE}/api/hls/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Api-Key": API_KEY },
     body: JSON.stringify({
       sourceId: SOURCE_ID,
       mid: sourceMid,
+      size: sourceSize,
       name: SOURCE_NAME,
       mime: "video/mp4",
       duration: info.duration,
@@ -237,8 +238,8 @@ async function main() {
     const segs = parseSegments();
     log("segments", segs.length);
     await report({ status: "uploading_tg", message: `0/${segs.length} segments` });
-    const { uploaded, sourceMid } = await uploadToTelegram(segs);
-    await register(info, uploaded, sourceMid);
+    const { uploaded, sourceMid, sourceSize } = await uploadToTelegram(segs);
+    await register(info, uploaded, sourceMid, sourceSize);
     log("DONE");
   } catch (e) {
     log("FAILED", e?.stack || e?.message || e);
