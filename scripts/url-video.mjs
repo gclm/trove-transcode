@@ -18,6 +18,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { createPipeline } from "./lib/pipeline.mjs";
+import { resolveOnRunner } from "./lib/resolvers.mjs";
 
 const env = process.env;
 const need = (k) => {
@@ -85,7 +86,17 @@ function sanitizeName(name) {
 
 async function main() {
   try {
-    const linkInfo = await fetchInfo();
+    const fetched = await fetchInfo();
+    let linkInfo;
+    if (fetched.needsResolve) {
+      // Worker egress is blocked for this site; resolve the page here on the runner.
+      log(`runner-side resolve for site=${fetched.site}`);
+      const resolved = await resolveOnRunner(fetched.site, fetched.sourceUrl);
+      linkInfo = { name: sanitizeName(resolved.title).replace(/\.mp4$/i, "") + ".mp4", url: resolved.url, headers: resolved.headers };
+      if (resolved.durationSec) log("resolved duration", resolved.durationSec);
+    } else {
+      linkInfo = fetched;
+    }
     // The resolved page title may arrive after job start, so the pipeline is
     // built here: captions and register must carry the real name.
     const pipeline = createPipeline({
