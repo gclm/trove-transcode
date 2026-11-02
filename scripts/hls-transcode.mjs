@@ -66,12 +66,17 @@ async function report(patch) {
 }
 
 async function downloadSource() {
-  log("download source (pre-signed)");
-  const res = await fetch(SOURCE_GET_URL);
-  if (!res.ok) throw new Error(`R2 download failed: HTTP ${res.status} ${await res.text().catch(() => "")}`);
+  // Authenticated endpoint; the Worker answers 302 to a short-lived presigned URL.
+  // Nothing secret is ever printed or stored in the public workflow logs.
+  log("download source");
+  const res = await fetch(`${API_BASE}/api/source/${SOURCE_ID}/download`, {
+    headers: { "X-Api-Key": API_KEY },
+    redirect: "follow",
+  });
+  if (!res.ok) throw new Error(`download failed: HTTP ${res.status}`);
   const buf = Buffer.from(await res.arrayBuffer());
   fs.writeFileSync(srcPath, buf);
-  log("downloaded", buf.length, "bytes ->", srcPath);
+  log("downloaded", buf.length, "bytes");
 }
 
 function probe() {
