@@ -110,7 +110,7 @@ function transcode(info) {
   }
   args.push(
     "-f", "hls",
-    "-hls_time", "6",
+    "-hls_time", "10",
     "-hls_playlist_type", "vod",
     "-hls_flags", "independent_segments",
     "-hls_segment_filename", path.join(outDir, "seg%05d.ts"),
@@ -146,42 +146,69 @@ async function uploadToTelegram(segs) {
   await client.start({ botAuthToken: TG_BOT_TOKEN });
   log("telegram connected as bot");
 
+  // v4: the original file is uploaded as ONE message (MTProto allows 2GB for bots,
+  // unlike the Bot API 50MB limit). Its message id becomes the file mid, so
+  // /dl/m/<mid> serves the original download without any extra mapping.
+  let sourceMid = null;
+  const srcSize = fs.statSync(srcPath).size;
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    try {
+      const msg = await client.sendFile(TG_CHANNEL, {
+        file: srcPath,
+        forceDocument: true,
+        workers: 4,
+        caption: `${SOURCE_NAME} · 原文件`,
+      });
+      sourceMid = msg.id;
+      break;
+    } catch (e) {
+      log(`upload source attempt ${attempt} failed: ${e?.message || e}`);
+      if (attempt === 4) throw e;
+      await new Promise((r) => setTimeout(r, 3000 * attempt));
+    }
+  }
+  log(`source uploaded (mid=${sourceMid}, ${srcSize} bytes)`);
+  await report({ status: "uploading_tg", message: `source uploaded, segments 0/${segs.length}` });
+
+  // v4: send up to 10 HLS segments per sendMediaGroup request (SendMultiMedia),
+  // cutting the number of API calls by 10x.
   const uploaded = [];
-  for (let i = 0; i < segs.length; i++) {
-    const seg = segs[i];
-    const size = fs.statSync(seg.file).size;
-    let msg = null;
+  const BATCH = 10;
+  for (let i = 0; i < segs.length; i += BATCH) {
+    const chunk = segs.slice(i, i + BATCH);
+    let msgs = null;
     for (let attempt = 1; attempt <= 4; attempt++) {
       try {
-        msg = await client.sendFile(TG_CHANNEL, {
-          file: seg.file,
+        msgs = await client.sendFile(TG_CHANNEL, {
+          file: chunk.map((x) => x.file),
           forceDocument: true,
           workers: 4,
-          caption: `${SOURCE_NAME} · HLS ${String(i + 1).padStart(4, "0")}`,
         });
         break;
       } catch (e) {
-        log(`upload segment ${i} attempt ${attempt} failed: ${e?.message || e}`);
+        log(`upload batch ${i} attempt ${attempt} failed: ${e?.message || e}`);
         if (attempt === 4) throw e;
         await new Promise((r) => setTimeout(r, 3000 * attempt));
       }
     }
-    uploaded.push({ seq: i, tg_mid: msg.id, size, duration: seg.duration });
-    log(`segment ${i + 1}/${segs.length} uploaded (tg_mid=${msg.id}, ${size} bytes)`);
-    if ((i + 1) % 20 === 0 || i + 1 === segs.length) {
-      await report({ status: "uploading_tg", message: `${i + 1}/${segs.length} segments`, progress: { done: i + 1, total: segs.length } });
+    if (!Array.isArray(msgs)) msgs = [msgs];
+    for (let j = 0; j < chunk.length; j++) {
+      uploaded.push({ seq: i + j, tg_mid: msgs[j].id, size: fs.statSync(chunk[j].file).size, duration: chunk[j].duration });
     }
+    log(`segments ${i + chunk.length}/${segs.length} uploaded`);
+    await report({ status: "uploading_tg", message: `${i + chunk.length}/${segs.length} segments`, progress: { done: i + chunk.length, total: segs.length } });
   }
   await client.disconnect().catch(() => {});
-  return uploaded;
+  return { uploaded, sourceMid };
 }
 
-async function register(info, segs) {
+async function register(info, segs, sourceMid) {
   const res = await fetch(`${API_BASE}/api/hls/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Api-Key": API_KEY },
     body: JSON.stringify({
       sourceId: SOURCE_ID,
+      mid: sourceMid,
       name: SOURCE_NAME,
       mime: "video/mp4",
       duration: info.duration,
@@ -206,8 +233,8 @@ async function main() {
     const segs = parseSegments();
     log("segments", segs.length);
     await report({ status: "uploading_tg", message: `0/${segs.length} segments` });
-    const uploaded = await uploadToTelegram(segs);
-    await register(info, uploaded);
+    const { uploaded, sourceMid } = await uploadToTelegram(segs);
+    await register(info, uploaded, sourceMid);
     log("DONE");
   } catch (e) {
     log("FAILED", e?.stack || e?.message || e);
