@@ -117,7 +117,7 @@ function transcode(info) {
     "-hls_time", "10",
     "-hls_playlist_type", "vod",
     "-hls_flags", "independent_segments",
-    "-hls_segment_filename", path.join(outDir, "seg%05d.ts"),
+    "-hls_segment_filename", path.join(outDir, `src-${SOURCE_ID.slice(0, 8)}-%05d.ts`),
     path.join(outDir, "index.m3u8"),
   );
   run("ffmpeg", args);
