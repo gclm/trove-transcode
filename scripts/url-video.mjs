@@ -53,7 +53,11 @@ async function fetchInfo() {
   const text = await res.text();
   if (!res.ok) throw new Error(`fetch-info failed: HTTP ${res.status} ${text.slice(0, 300)}`);
   const info = JSON.parse(text);
-  if (!info.ok || !info.url) throw new Error(`fetch-info returned no url: ${text.slice(0, 300)}`);
+  // needsResolve = the Worker could not resolve this page itself; the runner
+  // will resolve it. Only a response with neither url nor needsResolve is bad.
+  if (!info.ok || (!info.url && !info.needsResolve)) {
+    throw new Error(`fetch-info returned no url: ${text.slice(0, 300)}`);
+  }
   return info;
 }
 
