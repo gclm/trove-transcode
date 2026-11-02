@@ -3,14 +3,14 @@
  *
  * Flow: download source from R2 via a pre-signed GET URL -> ffmpeg HLS 6s
  * segments (copy when H.264/AAC, transcode otherwise) -> upload every .ts
- * segment to Telegram -> delete the R2 source via a pre-signed DELETE URL ->
- * POST /api/hls/register so the Worker can serve /dl/hls/<mid>/index.m3u8.
+ * segment to Telegram -> POST /api/hls/register. The Worker deletes the R2
+ * source copy after a successful register (Actions never gets R2 write access).
  *
  * No R2 credentials live in this public repo: the Worker signs short-lived
  * URLs and passes them in the repository_dispatch payload.
  *
  * Required env:
- *   SOURCE_ID, SOURCE_GET_URL, SOURCE_DELETE_URL, SOURCE_NAME, API_BASE
+ *   SOURCE_ID, SOURCE_GET_URL, SOURCE_NAME, API_BASE
  *   TG_API_ID, TG_API_HASH, TG_BOT_TOKEN, TG_CHANNEL
  *   TROVE_API_KEY (legacy X-Api-Key of the Worker)
  */
@@ -30,7 +30,6 @@ const need = (k) => {
 
 const SOURCE_ID = need("SOURCE_ID");
 const SOURCE_GET_URL = need("SOURCE_GET_URL");
-const SOURCE_DELETE_URL = need("SOURCE_DELETE_URL");
 const SOURCE_NAME = env.SOURCE_NAME || "video.mp4";
 const API_BASE = need("API_BASE").replace(/\/+$/, "");
 const API_KEY = need("TROVE_API_KEY");
@@ -73,15 +72,6 @@ async function downloadSource() {
   const buf = Buffer.from(await res.arrayBuffer());
   fs.writeFileSync(srcPath, buf);
   log("downloaded", buf.length, "bytes ->", srcPath);
-}
-
-async function deleteSource() {
-  try {
-    const res = await fetch(SOURCE_DELETE_URL, { method: "DELETE" });
-    log("delete source", res.status === 204 ? "ok" : `HTTP ${res.status}`);
-  } catch (e) {
-    log("delete source failed (12h lifecycle will clean it)", e?.message || e);
-  }
 }
 
 function probe() {
@@ -178,6 +168,9 @@ async function uploadToTelegram(segs) {
     }
     uploaded.push({ seq: i, tg_mid: msg.id, size, duration: seg.duration });
     log(`segment ${i + 1}/${segs.length} uploaded (tg_mid=${msg.id}, ${size} bytes)`);
+    if ((i + 1) % 20 === 0 || i + 1 === segs.length) {
+      await report({ status: "uploading_tg", message: `${i + 1}/${segs.length} segments`, progress: { done: i + 1, total: segs.length } });
+    }
   }
   await client.disconnect().catch(() => {});
   return uploaded;
@@ -203,16 +196,17 @@ async function register(info, segs) {
 }
 
 async function main() {
-  await report({ status: "transcoding", message: "workflow started" });
+  await report({ status: "downloading", message: "workflow started" });
   try {
     await downloadSource();
+    await report({ status: "transcoding", message: "source downloaded" });
     const info = probe();
     log("probe", JSON.stringify(info));
     transcode(info);
     const segs = parseSegments();
     log("segments", segs.length);
+    await report({ status: "uploading_tg", message: `0/${segs.length} segments` });
     const uploaded = await uploadToTelegram(segs);
-    await deleteSource();
     await register(info, uploaded);
     log("DONE");
   } catch (e) {

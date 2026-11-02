@@ -34,7 +34,6 @@ jobs:
         env:
           SOURCE_ID: ${{ github.event.client_payload.sourceId }}
           SOURCE_GET_URL: ${{ github.event.client_payload.sourceGetUrl }}
-          SOURCE_DELETE_URL: ${{ github.event.client_payload.sourceDeleteUrl }}
           SOURCE_NAME: ${{ github.event.client_payload.sourceName }}
           API_BASE: ${{ github.event.client_payload.apiBase }}
           TROVE_API_KEY: ${{ secrets.TROVE_API_KEY }}

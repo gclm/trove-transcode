@@ -7,16 +7,18 @@ Trove 的 HLS 转码流水线：GitHub Actions 从 Cloudflare R2 下载源文件
 1. 浏览器把源文件直传 R2（Trove Worker 签发的预签名 PUT URL）。
 2. Trove Worker 通过 `repository_dispatch`（`trove-transcode`）触发本仓库，`client_payload` 携带：
    - `sourceId`：Trove D1 的 sources 记录 id
-   - `sourceGetUrl` / `sourceDeleteUrl`：**有效期为 2 小时的预签名 URL**
+   - `sourceGetUrl`：**有效期为 6 小时的预签名 GET URL**
    - `sourceName` / `apiBase`
-3. Actions 下载源文件 → `ffprobe` 探测 → ffmpeg HLS 6s（H.264/AAC 直接 `-c copy`，HEVC 等转码 H.264）→ 逐片 `sendFile` 到 Telegram 频道 → 删除 R2 源文件 → `POST /api/hls/register`。
-4. Trove Worker 把 `files` 与 `hls_segments` 写进 D1，前端用 xgplayer 播放 `/dl/hls/<mid>/index.m3u8`。
+3. Actions 下载源文件 → `ffprobe` 探测 → ffmpeg HLS 6s（H.264/AAC 直接 `-c copy`，HEVC 等转码 H.264）→ 逐片 `sendFile` 到 Telegram 频道 → `POST /api/hls/register`。
+4. **R2 源文件的删除由 Trove Worker 收尾**：`/api/hls/register` 成功登记后 Worker 用 R2 binding 删除源文件；Actions 全程没有 R2 写权限，失败时由 12 小时 lifecycle 兜底清理。
+5. Trove Worker 把 `files` 与 `hls_segments` 写进 D1，前端用 xgplayer 播放 `/dl/hls/<mid>/index.m3u8`。
 
 ## 为什么用预签名 URL
 
 - R2 的 Secret Access Key **不进 GitHub**：public 仓库的 secrets 虽然加密，但减少一个高权限凭据的暴露面。
 - Actions 只需 `fetch(url)`，不依赖 S3 SDK / aws4fetch。
-- URL 有效期 2 小时，覆盖排队与下载；过期后源文件由 R2 lifecycle 12 小时兜底清理。
+- URL 有效期 6 小时，覆盖排队与慢速下载；过期后源文件由 R2 lifecycle 12 小时兜底清理。
+- Actions 只有读权限，删除动作留在 Worker 侧。
 
 ## 需要的 GitHub Secrets
 
@@ -36,7 +38,7 @@ Trove 的 HLS 转码流水线：GitHub Actions 从 Cloudflare R2 下载源文件
 
 ```bash
 npm install
-SOURCE_ID=... SOURCE_GET_URL=... SOURCE_DELETE_URL=... SOURCE_NAME=demo.mp4 \
+SOURCE_ID=... SOURCE_GET_URL=... SOURCE_NAME=demo.mp4 \
 API_BASE=https://api.trove.xzim.top TROVE_API_KEY=... \
 TG_API_ID=... TG_API_HASH=... TG_BOT_TOKEN=... TG_CHANNEL=... \
 node scripts/hls-transcode.mjs
