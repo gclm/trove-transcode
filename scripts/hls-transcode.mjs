@@ -218,4 +218,8 @@ async function main() {
   }
 }
 
-main();
+main().finally(() => {
+  // GramJS leaves its update-loop timer alive after disconnect; exit explicitly so
+  // GitHub Actions logs stay clean (job status still follows process.exitCode).
+  setTimeout(() => process.exit(process.exitCode ?? 0), 250).unref();
+});
