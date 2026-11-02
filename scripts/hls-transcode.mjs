@@ -147,7 +147,24 @@ async function uploadToTelegram(segs) {
     autoReconnect: false,
   });
   client.setLogLevel("error");
-  await client.start({ botAuthToken: TG_BOT_TOKEN });
+  // Bot authorization is rate-limited by Telegram (auth.ImportBotAuthorization);
+  // back off and retry instead of failing the whole job.
+  for (let attempt = 1; attempt <= 6; attempt++) {
+    try {
+      await client.start({ botAuthToken: TG_BOT_TOKEN });
+      break;
+    } catch (e) {
+      const msg = String(e?.message || e);
+      const m = msg.match(/wait of (\d+) seconds/);
+      if (m && attempt < 6) {
+        const wait = Number(m[1]) + 5;
+        log(`telegram auth flood-wait ${wait}s (attempt ${attempt})`);
+        await new Promise((r) => setTimeout(r, wait * 1000));
+        continue;
+      }
+      throw e;
+    }
+  }
   log("telegram connected as bot");
 
   // v4: the original file is uploaded as ONE message (MTProto allows 2GB for bots,
