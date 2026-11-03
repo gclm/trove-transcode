@@ -149,8 +149,8 @@ export function createPipeline(opts) {
     log("telegram connected as bot");
 
     // v4: the original file is uploaded as ONE message (MTProto allows 2GB for bots,
-    // unlike the Bot API 50MB limit). Its message id becomes the file mid, so
-    // /dl/m/<mid> serves the original download without any extra mapping.
+    // unlike the Bot API 50MB limit). Its Telegram message id is reported back as
+    // tg_mid; the server assigns the external uuidv7 file id (ADR-001 in trove).
     let sourceMid = null;
     const srcSize = fs.statSync(srcPath).size;
     for (let attempt = 1; attempt <= 4; attempt++) {
@@ -169,7 +169,7 @@ export function createPipeline(opts) {
         await new Promise((r) => setTimeout(r, 3000 * attempt));
       }
     }
-    log(`source uploaded (mid=${sourceMid}, ${srcSize} bytes)`);
+    log(`source uploaded (tg_mid=${sourceMid}, ${srcSize} bytes)`);
     let posterMid = null;
     if (posterPath) {
       for (let attempt = 1; attempt <= 3 && !posterMid; attempt++) {
@@ -181,7 +181,7 @@ export function createPipeline(opts) {
           if (attempt < 3) await new Promise((r) => setTimeout(r, 2000 * attempt));
         }
       }
-      log(`poster uploaded (mid=${posterMid})`);
+      log(`poster uploaded (poster_mid=${posterMid})`);
     }
     await report({ status: "uploading_tg", message: `source uploaded, segments 0/${segs.length}` });
 
@@ -222,7 +222,7 @@ export function createPipeline(opts) {
       method: "PUT",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
-        mid: sourceMid,
+        tg_mid: sourceMid,
         size: sourceSize,
         poster_mid: posterMid,
         name: sourceName,

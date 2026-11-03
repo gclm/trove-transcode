@@ -93,13 +93,13 @@ async function main() {
     const doc = msg?.document || msg?.media?.document;
     const size = Number(doc?.size || src.size);
     const mime = String(doc?.mimeType || "application/octet-stream");
-    log(`uploaded mid=${msg.id} size=${size} mime=${mime}`);
+    log(`uploaded tg_mid=${msg.id} size=${size} mime=${mime}`);
 
     const res = await fetch(`${API_BASE}/api/v1/tasks/${SOURCE_ID}/result`, {
       method: "PUT",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${API_KEY}` },
       body: JSON.stringify({
-        mid: msg.id,
+        tg_mid: msg.id,
         name: SOURCE_NAME,
         size,
         mime,
