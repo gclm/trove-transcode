@@ -2,7 +2,7 @@
  * Trove url-mode pipeline (link resolver tasks).
  *
  * Flow: pull the resolved direct link from the Worker's authenticated
- * /api/source/<id>/fetch-info endpoint -> stream it to disk (never buffered
+ * /api/v1/tasks/<id>/fetch-info endpoint -> stream it to disk (never buffered
  * whole in memory; sources reach hundreds of MB) -> shared pipeline
  * (probe / ffmpeg HLS / Telegram upload / register).
  *
@@ -46,19 +46,19 @@ function log(...args) {
 }
 
 async function fetchInfo() {
-  const res = await fetch(`${API_BASE}/api/source/${SOURCE_ID}/fetch-info`, {
-    headers: { "X-Api-Key": API_KEY },
+  const res = await fetch(`${API_BASE}/api/v1/tasks/${SOURCE_ID}/fetch-info`, {
+    headers: { Authorization: `Bearer ${API_KEY}` },
     redirect: "follow",
   });
   const text = await res.text();
   if (!res.ok) throw new Error(`fetch-info failed: HTTP ${res.status} ${text.slice(0, 300)}`);
-  const info = JSON.parse(text);
-  // needsResolve = the Worker could not resolve this page itself; the runner
-  // will resolve it. Only a response with neither url nor needsResolve is bad.
-  if (!info.ok || (!info.url && !info.needsResolve)) {
+  // v1 envelope: {data:{...}}. needsResolve = the Worker could not resolve this
+  // page itself; the runner will resolve it. Neither url nor needsResolve is bad.
+  const data = JSON.parse(text)?.data;
+  if (!data || (!data.url && !data.needs_resolve)) {
     throw new Error(`fetch-info returned no url: ${text.slice(0, 300)}`);
   }
-  return info;
+  return data;
 }
 
 async function downloadUrl(linkInfo) {
@@ -92,10 +92,10 @@ async function main() {
   try {
     const fetched = await fetchInfo();
     let linkInfo;
-    if (fetched.needsResolve) {
+    if (fetched.needs_resolve) {
       // Worker egress is blocked for this site; resolve the page here on the runner.
       log(`runner-side resolve for site=${fetched.site}`);
-      const resolved = await resolveOnRunner(fetched.site, fetched.sourceUrl);
+      const resolved = await resolveOnRunner(fetched.site, fetched.source_url);
       linkInfo = { name: sanitizeName(resolved.title).replace(/\.mp4$/i, "") + ".mp4", url: resolved.url, headers: resolved.headers };
       if (resolved.durationSec) log("resolved duration", resolved.durationSec);
     } else {
@@ -132,10 +132,10 @@ async function main() {
   } catch (e) {
     log("FAILED", e?.stack || e?.message || e);
     try {
-      await fetch(`${API_BASE}/api/hls/status`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Api-Key": API_KEY },
-        body: JSON.stringify({ sourceId: SOURCE_ID, status: "error", error: String(e?.message || e).slice(0, 1000) }),
+      await fetch(`${API_BASE}/api/v1/tasks/${SOURCE_ID}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${API_KEY}` },
+        body: JSON.stringify({ status: "error", error: String(e?.message || e).slice(0, 1000) }),
       });
     } catch { /* best effort */ }
     process.exitCode = 1;

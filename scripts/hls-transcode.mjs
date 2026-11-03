@@ -6,7 +6,7 @@
  * The Worker deletes the R2 source copy after a successful register.
  *
  * No R2 credentials live in this public repo: the Worker signs short-lived
- * URLs and hands them out only through /api/source/<id>/download.
+ * URLs and hands them out only through /api/v1/tasks/<id>/artifact.
  *
  * Required env:
  *   SOURCE_ID, SOURCE_NAME, API_BASE, TROVE_API_KEY
@@ -59,8 +59,8 @@ async function downloadSource() {
   // Authenticated endpoint; the Worker answers 302 to a short-lived presigned URL.
   // Nothing secret is ever printed or stored in the public workflow logs.
   log("download source");
-  const res = await fetch(`${API_BASE}/api/source/${SOURCE_ID}/download`, {
-    headers: { "X-Api-Key": API_KEY },
+  const res = await fetch(`${API_BASE}/api/v1/tasks/${SOURCE_ID}/artifact`, {
+    headers: { Authorization: `Bearer ${API_KEY}` },
     redirect: "follow",
   });
   if (!res.ok) throw new Error(`download failed: HTTP ${res.status}`);

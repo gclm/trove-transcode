@@ -28,8 +28,8 @@ function kindOf(mime) {
 }
 
 async function download(dir) {
-  const res = await fetch(`${API_BASE}/api/source/${SOURCE_ID}/download`, {
-    headers: { "X-Api-Key": API_KEY },
+  const res = await fetch(`${API_BASE}/api/v1/tasks/${SOURCE_ID}/artifact`, {
+    headers: { Authorization: `Bearer ${API_KEY}` },
     redirect: "follow",
   });
   if (!res.ok) throw new Error(`download failed: HTTP ${res.status}`);
@@ -44,10 +44,10 @@ async function download(dir) {
 
 async function report(status, message) {
   try {
-    await fetch(`${API_BASE}/api/hls/status`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Api-Key": API_KEY },
-      body: JSON.stringify({ sourceId: SOURCE_ID, status, message }),
+    await fetch(`${API_BASE}/api/v1/tasks/${SOURCE_ID}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${API_KEY}` },
+      body: JSON.stringify({ status, message }),
     });
   } catch { }
 }
@@ -95,11 +95,10 @@ async function main() {
     const mime = String(doc?.mimeType || "application/octet-stream");
     log(`uploaded mid=${msg.id} size=${size} mime=${mime}`);
 
-    const res = await fetch(`${API_BASE}/api/direct/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Api-Key": API_KEY },
+    const res = await fetch(`${API_BASE}/api/v1/tasks/${SOURCE_ID}/result`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${API_KEY}` },
       body: JSON.stringify({
-        sourceId: SOURCE_ID,
         mid: msg.id,
         name: SOURCE_NAME,
         size,

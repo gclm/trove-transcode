@@ -32,10 +32,10 @@ export function createPipeline(opts) {
 
   async function report(patch) {
     try {
-      const res = await fetch(`${apiBase}/api/hls/status`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Api-Key": apiKey },
-        body: JSON.stringify({ sourceId, ...patch }),
+      const res = await fetch(`${apiBase}/api/v1/tasks/${sourceId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify(patch),
       });
       log("status report", res.status, await res.text().then((t) => t.slice(0, 300)));
     } catch (e) {
@@ -218,14 +218,13 @@ export function createPipeline(opts) {
   }
 
   async function register(info, segs, sourceMid, sourceSize, posterMid) {
-    const res = await fetch(`${apiBase}/api/hls/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Api-Key": apiKey },
+    const res = await fetch(`${apiBase}/api/v1/tasks/${sourceId}/hls`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
-        sourceId,
         mid: sourceMid,
         size: sourceSize,
-        posterMid,
+        poster_mid: posterMid,
         name: sourceName,
         mime: "video/mp4",
         duration: info.duration,
