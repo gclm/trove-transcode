@@ -123,25 +123,52 @@ async def resolve(page_url: str, cookie: str | None = None) -> dict:
     raise last
 
 
-def list_hot(cookie: str | None = None, limit: int = 60) -> list[str]:
-    """抓首页热点列表，返回去重后的 external_key 列表（按页面出现序）。
+HOT_PAGES = 3
 
-    列表页结构无录制 fixture，采用宽松 viewkey 提取；零命中时抛 blocked，
-    交由编排 job 报错（见 plan 执行记录「待真机校准」项）。
-    """
-    import asyncio
 
-    html = asyncio.run(_fetch_home(cookie))
+def _extract_viewkeys(html: str) -> list[str]:
+    """从一页列表 HTML 提取去重 viewkey（页面存在重复容器与广告格）。"""
     seen: list[str] = []
     for m in re.finditer(r"view_video\.php\?viewkey=([0-9a-zA-Z]+)", html):
         key = f"{SITE}:viewkey={m.group(1)}"
         if key not in seen:
             seen.append(key)
-        if len(seen) >= limit:
-            break
-    if not seen:
-        raise ResolveError("blocked", "91porn 首页未解出任何 viewkey，列表页结构需校准")
     return seen
+
+
+def list_hot(cookie: str | None = None, limit: int = 72, pages: int = HOT_PAGES) -> list[str]:
+    """抓 hot1/hot2/hot3 三页热点列表，返回去重后的 external_key 列表。
+
+    每页约 24 个唯一 viewkey，三页合计 72 个（plan 实测：44/41/39 个容器，
+    去重后 24/24/24）。列表页用宽松 viewkey 提取，零命中抛 blocked。
+    """
+    import asyncio
+
+    async def collect() -> list[str]:
+        seen: list[str] = []
+        for page in range(1, pages + 1):
+            html = await _fetch_hot_page(page, cookie)
+            for key in _extract_viewkeys(html):
+                if key not in seen:
+                    seen.append(key)
+                if len(seen) >= limit:
+                    return seen
+        return seen
+
+    keys = asyncio.run(collect())
+    if not keys:
+        raise ResolveError("blocked", "91porn 热点列表未解出任何 viewkey，列表页结构需校准")
+    return keys
+
+
+async def _fetch_hot_page(page: int, cookie: str | None) -> str:
+    from lib.web import fetch_page
+
+    url = f"https://www.91porn.com/v.php?category=hot&viewtype=basic&page={page}"
+    res = await fetch_page(url, headers=page_headers(cookie))
+    if res.status_code != 200:
+        raise ResolveError("blocked", f"91porn hot page {page} HTTP {res.status_code}")
+    return res.text
 
 
 async def _fetch_home(cookie: str | None) -> str:
