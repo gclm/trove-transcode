@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import mimetypes
 import os
 import shutil
 import sys
@@ -33,6 +34,17 @@ def _kind_of(mime: str) -> str:
     if mime.startswith("image/"):
         return "image"
     return "file"
+
+
+def _file_name(name: str | None, mime: str | None, fallback: str) -> str:
+    """任务名 → 合法文件名：保留原名，缺扩展名时按 MIME 补。"""
+    base = os.path.basename((name or "").strip()) or fallback
+    if not os.path.splitext(base)[1]:
+        ext = mimetypes.guess_extension(mime or "") or ""
+        if ext == ".jpe":
+            ext = ".jpg"
+        base += ext
+    return base
 
 
 def _source_of(client: api.TroveApi, info: dict) -> tuple[str, dict]:
@@ -63,6 +75,7 @@ def process(client: api.TroveApi, source_id: str, chat_id: str) -> None:
         info = client.fetch_info(source_id)
         name = info.get("name") or f"{source_id}.bin"
         mime = info.get("mime") or "application/octet-stream"
+        file_name = _file_name(name, mime, f"{source_id}.bin")
         client.patch(source_id, status="downloading")
 
         # 通道 V/R 的源文件在 R2 暂存；没有暂存就回源直链。
@@ -70,7 +83,7 @@ def process(client: api.TroveApi, source_id: str, chat_id: str) -> None:
         headers: dict = {}
         if not staged:
             staged, headers = _source_of(client, info)
-        local = os.path.join(workdir, "source" + os.path.splitext(name)[1])
+        local = os.path.join(workdir, "source" + os.path.splitext(file_name)[1])
         download.download(staged, local, headers=headers)
 
         size = os.path.getsize(local)
@@ -80,10 +93,10 @@ def process(client: api.TroveApi, source_id: str, chat_id: str) -> None:
             probe = None  # 非视频或 ffprobe 不可用：按原样直传
 
         if probe and probe.get("height"):
-            _upload_hls(client, source_id, local, workdir, name, mime, size, probe, chat_id, info.get("folder_id"))
+            _upload_hls(client, source_id, local, workdir, name, file_name, mime, size, probe, chat_id, info.get("folder_id"))
         else:
             client.patch(source_id, status="uploading")
-            mid = tg.mtproto_upload(local, chat_id, caption=None)
+            mid = tg.mtproto_upload(local, chat_id, caption=None, filename=file_name)
             client.put_result(source_id, {
                 "tg_mid": mid,
                 "name": name,
@@ -97,7 +110,7 @@ def process(client: api.TroveApi, source_id: str, chat_id: str) -> None:
         shutil.rmtree(workdir, ignore_errors=True)
 
 
-def _upload_hls(client: api.TroveApi, source_id: str, local: str, workdir: str, name: str, mime: str, size: int, probe: dict, chat_id: str, info_folder: str | None = None) -> None:
+def _upload_hls(client: api.TroveApi, source_id: str, local: str, workdir: str, name: str, file_name: str, mime: str, size: int, probe: dict, chat_id: str, info_folder: str | None = None) -> None:
     client.patch(source_id, status="transcoding")
     file_id = uuid7()
     segdir = os.path.join(workdir, "hls")
@@ -131,7 +144,7 @@ def _upload_hls(client: api.TroveApi, source_id: str, local: str, workdir: str, 
         poster_file_id = tg.bot_send_photo(poster_path, chat_id)["file_id"]
 
     # 原档也归档：详情页「原档播放」直取，不依赖 HLS。
-    tg_mid = tg.mtproto_upload(local, chat_id)
+    tg_mid = tg.mtproto_upload(local, chat_id, filename=file_name)
 
     client.put_hls(source_id, {
         "file_id": file_id,

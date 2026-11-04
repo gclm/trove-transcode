@@ -38,7 +38,7 @@ def main() -> int:
         client.patch(
             source_id,
             status="resolved",
-            name=meta.get("title"),
+            name=meta.get("file_name") or meta.get("title"),
             duration_s=meta.get("duration_s"),
             poster_url=meta.get("poster_url"),
             external_key=meta.get("external_key"),

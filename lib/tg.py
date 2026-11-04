@@ -156,17 +156,18 @@ def chat_ref(chat_id: str | int) -> int | str:
     return s
 
 
-def mtproto_upload(path: str, chat_id: str, caption: str | None = None, attempts: int = 4) -> int:
+def mtproto_upload(path: str, chat_id: str, caption: str | None = None, attempts: int = 4, filename: str | None = None) -> int:
     """用 bot 账号把文件传进频道，返回 message_id（→ tg_mid）。
 
     Telethon 是 async API：整段跑在一个事件循环里（`asyncio.run`），
     调用方（同步的 job 代码）拿到的仍是普通 int。
     Telethon 只在真正需要时 import：解析/编排 job 不需要它。
+    `filename` 用于覆盖 TG 文档名（默认取临时文件名，会让频道里显示 source.mp4）。
     """
-    return asyncio.run(_mtproto_upload(path, chat_id, caption, attempts))
+    return asyncio.run(_mtproto_upload(path, chat_id, caption, attempts, filename))
 
 
-async def _mtproto_upload(path: str, chat_id: str, caption: str | None, attempts: int) -> int:
+async def _mtproto_upload(path: str, chat_id: str, caption: str | None, attempts: int, filename: str | None) -> int:
     from telethon import TelegramClient  # noqa: PLC0415
     from telethon.errors import FloodWaitError  # noqa: PLC0415
     from telethon.sessions import StringSession  # noqa: PLC0415
@@ -175,7 +176,7 @@ async def _mtproto_upload(path: str, chat_id: str, caption: str | None, attempts
     api_id = int(os.environ["TG_API_ID"])
     api_hash = os.environ["TG_API_HASH"]
     session = os.environ.get("TG_SESSION") or ""
-    name = os.path.basename(path)
+    name = os.path.basename(filename) if filename else os.path.basename(path)
 
     for attempt in range(attempts):
         try:

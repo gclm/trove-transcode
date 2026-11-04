@@ -38,6 +38,7 @@ def test_91porn_strencode2_decode():
     )
     r = _91.parse_page(html, "https://www.91porn.com/view_video.php?viewkey=fb57545243e76b64dd2c")
     assert r["title"] == "测试标题"
+    assert r["file_name"] == "测试标题.mp4"
     assert r["duration_s"] == 15 * 60 + 24
     assert r["download_url"] == STRENCODE_SRC
     assert r["external_key"] == "91porn:viewkey=fb57545243e76b64dd2c"

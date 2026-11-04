@@ -84,9 +84,13 @@ def parse_page(html: str, page_url: str) -> dict:
     )
 
     vid = extract_id(page_url)
+    display_title = title or "91porn video"
+    # 91porn 的文件名跟页面标题走，扩展名固定 .mp4（用户 2026-11-04 定的规则）。
+    safe_name = re.sub(r'[\\/:*?"<>|\r\n]+', "_", display_title).strip() or "91porn video"
     return {
         "external_key": f"{SITE}:viewkey={vid}" if vid else f"{SITE}:unknown",
-        "title": title or "91porn video",
+        "title": display_title,
+        "file_name": f"{safe_name}.mp4",
         "duration_s": duration,
         "poster_url": poster,
         "download_url": video_url,
