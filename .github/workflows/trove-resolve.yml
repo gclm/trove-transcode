@@ -1,0 +1,39 @@
+name: trove-resolve
+
+# 解析 worker：主仓 POST /api/v1/tasks 建任务后触发，只回报元数据，不做下载。
+on:
+  repository_dispatch:
+    types: [trove-resolve]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trove-resolve-${{ github.event.client_payload.sourceId }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Resolve
+        env:
+          SOURCE_ID: ${{ github.event.client_payload.sourceId }}
+          API_BASE: ${{ secrets.TROVE_API_BASE }}
+          TROVE_API_KEY: ${{ secrets.TROVE_API_KEY }}
+          TG_API_ID: ${{ secrets.TG_API_ID }}
+          TG_API_HASH: ${{ secrets.TG_API_HASH }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHANNEL: ${{ secrets.TG_CHANNEL }}
+          PORN91_COOKIE: ${{ secrets.PORN91_COOKIE }}
+          DOUYIN_COOKIE: ${{ secrets.DOUYIN_COOKIE }}
+          XHS_COOKIE: ${{ secrets.XHS_COOKIE }}
+          HAIJIAO_COOKIE: ${{ secrets.HAIJIAO_COOKIE }}
+        run: python workers/resolve/job.py

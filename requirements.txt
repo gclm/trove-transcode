@@ -1,0 +1,7 @@
+# 解析站点需要（packages/sites）
+httpx==0.28.1
+beautifulsoup4==4.12.3
+# 抖音优先走 yt-dlp（失败回落到自写 feed 解析）
+yt-dlp==2024.12.13
+# 原档大文件 MTProto 上传（懒加载，仅上传 job 需要）
+Telethon==1.37.0

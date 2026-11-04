@@ -1,0 +1,60 @@
+name: trove-worker
+
+# 上传/转码 worker：由主仓 dispatchTranscode 触发，payload 只有 {type, sourceId}。
+# 敏感值（直链/标题/预签名 URL）不进 payload —— 本 job 自己向 API 取。
+on:
+  repository_dispatch:
+    types: [trove-worker]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trove-worker-${{ github.event.client_payload.sourceId }}
+  cancel-in-progress: false
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install deps
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          ffmpeg -version | head -n 1
+          pip install -r requirements.txt
+      - name: Self-check env
+        env:
+          SOURCE_ID: ${{ github.event.client_payload.sourceId }}
+          API_BASE: ${{ secrets.TROVE_API_BASE }}
+          TROVE_API_KEY: ${{ secrets.TROVE_API_KEY }}
+          TG_API_ID: ${{ secrets.TG_API_ID }}
+          TG_API_HASH: ${{ secrets.TG_API_HASH }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHANNEL: ${{ secrets.TG_CHANNEL }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: python workers/upload/job.py --dry-run
+      - name: Upload
+        env:
+          SOURCE_ID: ${{ github.event.client_payload.sourceId }}
+          API_BASE: ${{ secrets.TROVE_API_BASE }}
+          TROVE_API_KEY: ${{ secrets.TROVE_API_KEY }}
+          TG_API_ID: ${{ secrets.TG_API_ID }}
+          TG_API_HASH: ${{ secrets.TG_API_HASH }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHANNEL: ${{ secrets.TG_CHANNEL }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          PORN91_COOKIE: ${{ secrets.PORN91_COOKIE }}
+          DOUYIN_COOKIE: ${{ secrets.DOUYIN_COOKIE }}
+        run: python workers/upload/job.py
