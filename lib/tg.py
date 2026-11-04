@@ -11,6 +11,7 @@ message_id 无法用于 getFile（plan §3.4 关键坑）。
 from __future__ import annotations
 
 import asyncio
+import re
 
 import json
 import mimetypes
@@ -140,6 +141,21 @@ def bot_file_size(file_id: str, token: str | None = None) -> int:
 # ---- MTProto（Telethon，懒加载） -------------------------------------------------
 
 
+def chat_ref(chat_id: str | int) -> int | str:
+    """频道引用归一：数字串转 int（bot 不能用字符串查实体），@name 原样。
+
+    Telethon 把纯数字字符串当手机号解析，bot 账号会直接报
+    `Cannot get entity by phone number as a bot`。
+    """
+    s = str(chat_id).strip()
+    if re.fullmatch(r"-?\d+", s):
+        return int(s)
+    m = re.match(r"^(?:https?://)?t\.me/c/(\d+)", s)
+    if m:
+        return int("-100" + m.group(1))
+    return s
+
+
 def mtproto_upload(path: str, chat_id: str, caption: str | None = None, attempts: int = 4) -> int:
     """用 bot 账号把文件传进频道，返回 message_id（→ tg_mid）。
 
@@ -171,7 +187,7 @@ async def _mtproto_upload(path: str, chat_id: str, caption: str | None, attempts
             try:
                 await client.start(bot_token=_token())
                 msg = await client.send_file(
-                    chat_id,
+                    chat_ref(chat_id),
                     path,
                     caption=caption,
                     force_document=True,

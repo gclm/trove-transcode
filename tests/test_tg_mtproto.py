@@ -64,3 +64,14 @@ def fake_telethon(monkeypatch, tmp_path):
 
 def test_mtproto_upload_awaits_and_returns_message_id(fake_telethon):
     assert tg.mtproto_upload(fake_telethon, "-100123") == 4242
+
+
+def test_chat_ref_numeric_string_becomes_int():
+    # bot 不能把数字串当频道：必须转 int，否则 Telethon 按手机号解析报错。
+    assert tg.chat_ref("-1001234567890") == -1001234567890
+    assert tg.chat_ref("123456") == 123456
+
+
+def test_chat_ref_username_and_private_link():
+    assert tg.chat_ref("@my_channel") == "@my_channel"
+    assert tg.chat_ref("https://t.me/c/1234567890/42") == -1001234567890
