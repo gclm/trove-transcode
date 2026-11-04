@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
@@ -48,6 +49,8 @@ def run_shard(client: api.TroveApi, shard: list[dict], chat_id: str) -> dict:
                 client.patch(source_id, status="error", error_code="collect_failed", error_message=str(e)[:300])
             except Exception:
                 pass
+        # 片内节流：72 条/天的大批量下，给 Telegram 留出喘息窗口，避免 FloodWait。
+        time.sleep(5)
     return {"ok": ok, "failed": failed}
 
 

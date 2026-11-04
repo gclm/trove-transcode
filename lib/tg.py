@@ -156,7 +156,7 @@ def chat_ref(chat_id: str | int) -> int | str:
     return s
 
 
-def mtproto_upload(path: str, chat_id: str, caption: str | None = None, attempts: int = 4, filename: str | None = None) -> int:
+def mtproto_upload(path: str, chat_id: str, caption: str | None = None, attempts: int = 6, filename: str | None = None) -> int:
     """用 bot 账号把文件传进频道，返回 message_id（→ tg_mid）。
 
     Telethon 是 async API：整段跑在一个事件循环里（`asyncio.run`），
@@ -200,5 +200,5 @@ async def _mtproto_upload(path: str, chat_id: str, caption: str | None, attempts
         except FloodWaitError as e:  # 频道限流：等满再试
             if attempt == attempts - 1:
                 raise TgError(f"flood wait {e.seconds}s", code=429, retry_after=e.seconds) from None
-            await asyncio.sleep(min(int(e.seconds) + 1, 120))
+            await asyncio.sleep(min(int(e.seconds) + 1, 1800))
     raise TgError("mtproto upload failed")
