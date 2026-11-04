@@ -134,14 +134,22 @@ def _upload_hls(client: api.TroveApi, source_id: str, local: str, workdir: str, 
     with open(playlist_path, "w", encoding="utf-8") as fh:
         fh.write(playlist)
     # Worker 侧走 Bot API getFile(file_id) 读回 playlist —— 存 file_id，不存 message_id。
-    m3u8_file_id = tg.bot_send_document(playlist_path, chat_id, filename=f"{file_id}.m3u8")["file_id"]
+    # playlist 与封面合成一组批量上传：一条 sendMediaGroup 拿两个 file_id，少一次 Bot 调用。
+    poster_path = os.path.join(workdir, "poster.jpg")
+    meta_paths = [playlist_path]
+    if transcode.make_poster(local, poster_path):
+        meta_paths.append(poster_path)
+    if len(meta_paths) > 1:
+        meta_receipts = tg.bot_send_media_group(meta_paths, chat_id)
+        if len(meta_receipts) != 2 or not all(r.get("file_id") for r in meta_receipts):
+            raise RuntimeError("playlist/poster upload returned no file_id")
+        m3u8_file_id = meta_receipts[0]["file_id"]
+        poster_file_id = meta_receipts[1]["file_id"]
+    else:
+        m3u8_file_id = tg.bot_send_document(playlist_path, chat_id, filename=f"{file_id}.m3u8")["file_id"]
+        poster_file_id = None
     if not m3u8_file_id:
         raise RuntimeError("playlist upload returned no file_id")
-
-    poster_path = os.path.join(workdir, "poster.jpg")
-    poster_file_id = None
-    if transcode.make_poster(local, poster_path):
-        poster_file_id = tg.bot_send_photo(poster_path, chat_id)["file_id"]
 
     # 原档也归档：详情页「原档播放」直取，不依赖 HLS。
     tg_mid = tg.mtproto_upload(local, chat_id, filename=file_name)

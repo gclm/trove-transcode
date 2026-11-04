@@ -42,7 +42,7 @@ def test_ffmpeg_args_h264_aac_all_copy():
     assert args[:4] == ["-y", "-hide_banner", "-i", "/tmp/src.mp4"]
     assert args[args.index("-c:v") + 1] == "copy"
     assert args[args.index("-c:a") + 1] == "copy"
-    assert args[args.index("-hls_time") + 1] == "10"
+    assert args[args.index("-hls_time") + 1] == "20"
     assert args[args.index("-hls_playlist_type") + 1] == "vod"
     assert args[args.index("-hls_flags") + 1] == "independent_segments"
     assert args[args.index("-hls_segment_filename") + 1] == "/tmp/out/src-abc-%05d.ts"

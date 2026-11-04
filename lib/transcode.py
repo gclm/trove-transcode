@@ -54,7 +54,7 @@ def build_ffmpeg_args(src: str, info: dict, outdir: str, prefix: str) -> list[st
         else:
             args += ["-c:a", "aac", "-b:a", "128k"]
     args += [
-        "-hls_time", "10",
+        "-hls_time", "20",
         "-hls_playlist_type", "vod",
         "-hls_flags", "independent_segments",
         "-hls_segment_filename", os.path.join(outdir, f"{prefix}-%05d.ts"),
