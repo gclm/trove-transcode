@@ -100,6 +100,12 @@ class TroveApi:
             raise
         return headers.get("Location") or headers.get("location")
 
+    def folders(self) -> list[dict]:
+        return self._json("GET", "/api/v1/folders").get("data") or []
+
+    def create_folder(self, name: str) -> dict:
+        return self._json("POST", "/api/v1/folders", {"name": name}).get("data") or {}
+
     def external_keys(self, keys: list[str]) -> list[dict]:
         data = self._json("POST", "/api/v1/external-keys/queries", {"keys": keys}).get("data") or []
         return data

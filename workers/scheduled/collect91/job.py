@@ -19,7 +19,16 @@ from workers.scheduled.collect91.shards import shard_items  # noqa: E402
 
 CORE = ["API_BASE", "TROVE_API_KEY"]
 HOT_LIMIT = int(os.environ.get("COLLECT_LIMIT", "72"))
+FOLDER_NAME = os.environ.get("COLLECT_FOLDER", "91pron")
 _91 = importlib.import_module("packages.sites.91porn")
+
+
+def _folder_id(client, name: str = FOLDER_NAME) -> str:
+    """采集产物统一落「91pron」目录：先按名字找，找不到就建。"""
+    for folder in client.folders():
+        if folder.get("name") == name:
+            return folder["id"]
+    return client.create_folder(name).get("id") or ""
 
 
 def main() -> int:
@@ -39,13 +48,14 @@ def main() -> int:
     states = {row["key"]: row["state"] for row in client.external_keys(keys)}
     fresh = [k for k in keys if states.get(k) == "absent"]
 
+    folder_id = _folder_id(client)
     shard = []
     for key in fresh:
         entry = _91.entry_from_key(key)
         if not entry:
             continue
         try:
-            task = client._json("POST", "/api/v1/tasks", {"url": entry}).get("data") or {}
+            task = client._json("POST", "/api/v1/tasks", {"url": entry, "folder_id": folder_id}).get("data") or {}
         except api.ApiError as e:
             print(f"skip {key}: {e.code}", file=sys.stderr)
             continue
