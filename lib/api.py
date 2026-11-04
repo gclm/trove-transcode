@@ -62,6 +62,9 @@ class TroveApi:
             with opener.open(req, timeout=self.timeout) as resp:
                 return resp.status, resp.read(), dict(resp.headers)
         except urllib.error.HTTPError as e:
+            # follow=False 时 3xx 是正常结果（artifact 的预签名 Location），不当错误抛。
+            if not follow and 300 <= e.code < 400:
+                return e.code, b"", dict(e.headers)
             payload = e.read()
             raise ApiError(e.code, _error_code(payload), _error_message(payload)) from None
 
