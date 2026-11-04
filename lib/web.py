@@ -14,7 +14,7 @@ from packages.sites.common import BROWSER_UA
 
 # 站点 → 需要先访问一次以领取游客 cookie 的首页
 WARM_UP = {
-    "91porn.com": "https://www.91porn.com/",
+    "91porn.com": "https://www.91porn.com/index.php",
     "xiaohongshu.com": "https://www.xiaohongshu.com/",
     "haijiao.com": "https://www.haijiao.com/",
 }

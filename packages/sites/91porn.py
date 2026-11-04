@@ -143,7 +143,7 @@ def list_hot(cookie: str | None = None, limit: int = 60) -> list[str]:
 async def _fetch_home(cookie: str | None) -> str:
     from lib.web import fetch_page
 
-    res = await fetch_page("https://www.91porn.com/", headers=page_headers(cookie))
+    res = await fetch_page("https://www.91porn.com/index.php", headers=page_headers(cookie))
     if res.status_code != 200:
         raise ResolveError("blocked", f"91porn homepage HTTP {res.status_code}")
     return res.text
