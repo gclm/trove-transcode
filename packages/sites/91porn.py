@@ -57,9 +57,9 @@ def parse_page(html: str, page_url: str) -> dict:
     # 200 但无播放器：反爬拦截或游客每日配额页。
     if "strencode2" not in html and "player_one" not in html:
         if re.search(r"temporarily unable|please try again", html, re.I):
-            raise ResolveError("blocked", "91porn 反爬拦截：请稍后重试或配置 PORN91_COOKIE")
+            raise ResolveError("blocked", "91porn 反爬拦截：请稍后重试")
         if re.search(r"观看|次数|每天|login", html):
-            raise ResolveError("quota", "91porn 游客配额已用尽：配置 PORN91_COOKIE 后重试")
+            raise ResolveError("quota", "91porn 游客配额已用尽（已自动更换访客身份仍失败，稍后重试或配置 cookie）")
         raise ResolveError("not-found", "91porn 页面中未找到播放器（视频不存在或已删除）")
 
     cipher = (
@@ -101,11 +101,22 @@ def _re_search(pattern, text, flags=0):
 
 
 async def resolve(page_url: str, cookie: str | None = None) -> dict:
-    async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
-        res = await client.get(page_url, headers=page_headers(cookie))
-    if res.status_code != 200:
-        raise ResolveError("blocked", f"91porn returned HTTP {res.status_code}")
-    return parse_page(res.text, page_url)
+    from lib.web import fetch_page
+
+    last: ResolveError | None = None
+    for _ in range(2):
+        res = await fetch_page(page_url, headers=page_headers(cookie))
+        if res.status_code != 200:
+            last = ResolveError("blocked", f"91porn returned HTTP {res.status_code}")
+            continue
+        try:
+            return parse_page(res.text, page_url)
+        except ResolveError as exc:
+            last = exc
+            if exc.code not in ("quota", "blocked"):
+                raise
+    assert last is not None
+    raise last
 
 
 def list_hot(cookie: str | None = None, limit: int = 60) -> list[str]:
@@ -130,8 +141,9 @@ def list_hot(cookie: str | None = None, limit: int = 60) -> list[str]:
 
 
 async def _fetch_home(cookie: str | None) -> str:
-    async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
-        res = await client.get("https://www.91porn.com/", headers=page_headers(cookie))
+    from lib.web import fetch_page
+
+    res = await fetch_page("https://www.91porn.com/", headers=page_headers(cookie))
     if res.status_code != 200:
         raise ResolveError("blocked", f"91porn homepage HTTP {res.status_code}")
     return res.text

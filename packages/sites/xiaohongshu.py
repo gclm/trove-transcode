@@ -109,9 +109,10 @@ def parse_page(html: str, page_url: str) -> dict:
 
 async def resolve(page_url: str, cookie: str | None = None) -> dict:
     headers = {"User-Agent": BROWSER_UA, **({"Cookie": cookie} if cookie else {})}
-    async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
-        res = await client.get(page_url, headers=headers)
-        final_url = str(res.url)
+    from lib.web import fetch_page
+
+    res = await fetch_page(page_url, headers=headers)
+    final_url = str(res.url)
     if res.status_code != 200:
         raise ResolveError("blocked", f"xiaohongshu HTTP {res.status_code}")
     # xhslink 短链展开后再提 note_id
