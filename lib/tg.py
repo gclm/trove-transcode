@@ -10,6 +10,8 @@ message_id 无法用于 getFile（plan §3.4 关键坑）。
 """
 from __future__ import annotations
 
+import asyncio
+
 import json
 import mimetypes
 import os
@@ -141,8 +143,14 @@ def bot_file_size(file_id: str, token: str | None = None) -> int:
 def mtproto_upload(path: str, chat_id: str, caption: str | None = None, attempts: int = 4) -> int:
     """用 bot 账号把文件传进频道，返回 message_id（→ tg_mid）。
 
+    Telethon 是 async API：整段跑在一个事件循环里（`asyncio.run`），
+    调用方（同步的 job 代码）拿到的仍是普通 int。
     Telethon 只在真正需要时 import：解析/编排 job 不需要它。
     """
+    return asyncio.run(_mtproto_upload(path, chat_id, caption, attempts))
+
+
+async def _mtproto_upload(path: str, chat_id: str, caption: str | None, attempts: int) -> int:
     from telethon import TelegramClient  # noqa: PLC0415
     from telethon.errors import FloodWaitError  # noqa: PLC0415
     from telethon.sessions import StringSession  # noqa: PLC0415
@@ -155,11 +163,10 @@ def mtproto_upload(path: str, chat_id: str, caption: str | None = None, attempts
 
     for attempt in range(attempts):
         try:
-            client = TelegramClient(StringSession(session), api_id, api_hash)
-            client.parse_mode = None
-            client.start(bot_token=_token())
-            try:
-                msg = client.send_file(
+            async with TelegramClient(StringSession(session), api_id, api_hash) as client:
+                client.parse_mode = None
+                await client.start(bot_token=_token())
+                msg = await client.send_file(
                     chat_id,
                     path,
                     caption=caption,
@@ -167,10 +174,8 @@ def mtproto_upload(path: str, chat_id: str, caption: str | None = None, attempts
                     attributes=[DocumentAttributeFilename(file_name=name)],
                 )
                 return int(msg.id)
-            finally:
-                client.disconnect()
         except FloodWaitError as e:  # 频道限流：等满再试
             if attempt == attempts - 1:
                 raise TgError(f"flood wait {e.seconds}s", code=429, retry_after=e.seconds) from None
-            time.sleep(min(int(e.seconds) + 1, 120))
+            await asyncio.sleep(min(int(e.seconds) + 1, 120))
     raise TgError("mtproto upload failed")
