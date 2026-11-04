@@ -41,3 +41,27 @@ def resolve_key(external_key: str) -> dict:
     if not entry:
         raise registry.ResolveError("unsupported-form", f"unknown key {external_key}")
     return resolve(entry)
+
+
+RETRY_CODES = ("blocked", "quota")
+RETRY_BACKOFF = (20, 60)
+
+
+def resolve_with_retry(url: str, cookie: str | None = None, attempts: int = 3) -> dict:
+    """解析并对外站点抖动（502/配额页）做退避重试。
+
+    91porn 在批量采集时会对同一出口 IP 短时返回 502，页面本身没坏；
+    等 20s/60s 后换一次 visitor cookie 通常就能恢复，因此这里重试而不是直接判失败。
+    """
+    import time
+
+    last: Exception | None = None
+    for i in range(attempts):
+        try:
+            return resolve(url, cookie=cookie)
+        except registry.ResolveError as exc:
+            last = exc
+            if exc.code not in RETRY_CODES or i == attempts - 1:
+                raise
+            time.sleep(RETRY_BACKOFF[min(i, len(RETRY_BACKOFF) - 1)])
+    raise last  # type: ignore[misc]

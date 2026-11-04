@@ -54,7 +54,7 @@ def _source_of(client: api.TroveApi, info: dict) -> tuple[str, dict]:
     直链寿命远短于任务寿命，重新解析也比存下来可靠。
     """
     if info.get("mode") == "resolve" and info.get("source_url"):
-        meta = resolve.resolve(info["source_url"])
+        meta = resolve.resolve_with_retry(info["source_url"])
         return meta["download_url"], meta.get("download_headers") or {}
     url = info.get("url") or ""
     if not url:

@@ -29,7 +29,7 @@ def run_shard(client: api.TroveApi, shard: list[dict], chat_id: str) -> dict:
             if not link:
                 raise registry.ResolveError("unsupported-form", "task has no source_url")
 
-            meta = resolve.resolve(link)
+            meta = resolve.resolve_with_retry(link)
             client.patch(
                 source_id,
                 status="resolved",
