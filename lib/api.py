@@ -110,6 +110,16 @@ class TroveApi:
         data = self._json("POST", "/api/v1/external-keys/queries", {"keys": keys}).get("data") or []
         return data
 
+    def create_tasks_batch(self, items: list[dict], folder_id: str | None = None) -> dict:
+        body: dict = {"items": items}
+        if folder_id:
+            body["folder_id"] = folder_id
+        return self._json("POST", "/api/v1/tasks/batch", body).get("data") or {}
+
+    def runner_config(self) -> dict:
+        """Worker-owned Telegram/resolver credentials; deployment key only."""
+        return self._json("GET", "/api/v1/runner-config").get("data") or {}
+
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401

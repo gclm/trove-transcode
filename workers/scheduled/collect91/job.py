@@ -14,12 +14,14 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
-from lib import api  # noqa: E402
+from lib import api, config  # noqa: E402
 from workers.scheduled.collect91.shards import shard_items  # noqa: E402
 
 CORE = ["API_BASE", "TROVE_API_KEY"]
 HOT_LIMIT = int(os.environ.get("COLLECT_LIMIT", "72"))
 FOLDER_NAME = os.environ.get("COLLECT_FOLDER", "91pron")
+# 6 个上传 bot 配置好后设为 "0,1,2,3,4,5"；默认只用主 bot，避免未配置的槽位失败。
+BOT_SLOTS = [int(x) for x in os.environ.get("COLLECT_BOT_SLOTS", "0").split(",") if x.strip()]
 _91 = importlib.import_module("packages.sites.91porn")
 
 
@@ -38,31 +40,40 @@ def main() -> int:
         return 0
     api.env_or_die(CORE)
     client = api.TroveApi(os.environ["API_BASE"], os.environ["TROVE_API_KEY"])
+    config.bootstrap(client)
 
     keys = _91.list_hot(cookie=os.environ.get("PORN91_COOKIE"), limit=HOT_LIMIT)
     if not keys:
         print("[]")
         return 0
 
-    # 去重：stored（已入库）/ in_flight（在途任务）都跳过，只有 absent 才建任务。
-    states = {row["key"]: row["state"] for row in client.external_keys(keys)}
-    fresh = [k for k in keys if states.get(k) == "absent"]
+    # 一次 batch 建任务：服务端按 stored/in_flight/请求内重复去重，返回 created/skipped。
+    items = []
+    for key in keys:
+        entry = _91.entry_from_key(key)
+        if entry:
+            items.append({"url": entry, "external_key": key})
+    if not items:
+        print("[]")
+        return 0
 
     folder_id = _folder_id(client)
-    shard = []
-    for key in fresh:
-        entry = _91.entry_from_key(key)
-        if not entry:
-            continue
-        try:
-            task = client._json("POST", "/api/v1/tasks", {"url": entry, "folder_id": folder_id}).get("data") or {}
-        except api.ApiError as e:
-            print(f"skip {key}: {e.code}", file=sys.stderr)
-            continue
-        if task.get("id"):
-            shard.append({"source_id": task["id"], "key": key})
+    result = client.create_tasks_batch(items, folder_id=folder_id)
+    created = result.get("created") or []
+    skipped = result.get("skipped") or []
+    print(f"batch created={len(created)} skipped={len(skipped)}", file=sys.stderr)
+    if skipped:
+        by_state: dict[str, int] = {}
+        for row in skipped:
+            by_state[row.get("state", "unknown")] = by_state.get(row.get("state", "unknown"), 0) + 1
+        print(f"batch skipped states={by_state}", file=sys.stderr)
 
-    print(json.dumps(shard_items(shard), ensure_ascii=False))
+    shard = [{"source_id": row["id"], "key": row.get("external_key") or ""} for row in created if row.get("id")]
+    summary_path = os.environ.get("COLLECT_SUMMARY_PATH")
+    if summary_path:
+        with open(summary_path, "w", encoding="utf-8") as fh:
+            json.dump({"fresh": len(created), "created": len(created), "skipped": len(skipped), "items": len(shard)}, fh)
+    print(json.dumps(shard_items(shard, slots=BOT_SLOTS), ensure_ascii=False))
     return 0
 
 

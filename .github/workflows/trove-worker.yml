@@ -33,28 +33,10 @@ jobs:
           SOURCE_ID: ${{ github.event.client_payload.sourceId }}
           API_BASE: ${{ secrets.TROVE_API_BASE }}
           TROVE_API_KEY: ${{ secrets.TROVE_API_KEY }}
-          TG_API_ID: ${{ secrets.TG_API_ID }}
-          TG_API_HASH: ${{ secrets.TG_API_HASH }}
-          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
-          TG_CHANNEL: ${{ secrets.TG_CHANNEL }}
-          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
-          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: python workers/upload/job.py --dry-run
       - name: Upload
         env:
           SOURCE_ID: ${{ github.event.client_payload.sourceId }}
           API_BASE: ${{ secrets.TROVE_API_BASE }}
           TROVE_API_KEY: ${{ secrets.TROVE_API_KEY }}
-          TG_API_ID: ${{ secrets.TG_API_ID }}
-          TG_API_HASH: ${{ secrets.TG_API_HASH }}
-          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
-          TG_CHANNEL: ${{ secrets.TG_CHANNEL }}
-          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
-          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          R2_BUCKET: ${{ secrets.R2_BUCKET }}
-          PORN91_COOKIE: ${{ secrets.PORN91_COOKIE }}
-          DOUYIN_COOKIE: ${{ secrets.DOUYIN_COOKIE }}
         run: python workers/upload/job.py

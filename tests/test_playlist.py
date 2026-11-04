@@ -1,7 +1,7 @@
 """§3.6 m3u8 playlist 格式契约测试（对齐 plan 20261103 §3.6）。"""
 import math
 
-from lib.transcode import build_playlist
+from lib.transcode import build_playlist, segment_rows
 
 
 def _seg(seq, fid, size, dur):
@@ -57,3 +57,18 @@ def test_playlist_empty_rejected():
     except ValueError:
         return
     raise AssertionError("empty segments must be rejected")
+
+
+def test_playlist_omits_bot_slot_for_main_bot():
+    segs = [{"seq": 0, "tg_file_id": "F", "size": 1, "duration": 2.0, "bot_slot": 0}]
+    assert "&b=" not in build_playlist(segs, "X")
+
+
+def test_playlist_appends_bot_slot_for_helper_bot():
+    segs = [{"seq": 0, "tg_file_id": "F", "size": 1, "duration": 2.0, "bot_slot": 3}]
+    assert "/dl/seg/X/000.ts?fid=F&sz=1&b=3" in build_playlist(segs, "X")
+
+
+def test_segment_rows_keeps_bot_slot():
+    rows = segment_rows([{"tg_file_id": "F", "size": 2, "duration": 3.0}], "X", bot_slot=4)
+    assert rows[0]["bot_slot"] == 4

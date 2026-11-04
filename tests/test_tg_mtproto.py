@@ -56,7 +56,7 @@ def fake_telethon(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "telethon.tl.types", tlt)
     monkeypatch.setenv("TG_API_ID", "1")
     monkeypatch.setenv("TG_API_HASH", "h")
-    monkeypatch.setenv("TG_BOT_TOKEN", "t")
+    monkeypatch.setenv("BOTS", '[{"token": "111111:' + "A" * 35 + '", "bot_name": "main", "master": true}]')
     f = tmp_path / "a.bin"
     f.write_bytes(b"x")
     return str(f)

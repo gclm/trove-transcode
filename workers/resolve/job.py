@@ -11,22 +11,19 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from lib import api, resolve  # noqa: E402
+from lib import api, config, resolve  # noqa: E402
 from packages.sites import registry  # noqa: E402
 
 CORE = ["SOURCE_ID", "API_BASE", "TROVE_API_KEY"]
-# 自检清单比运行期需求宽：runner 上 TG 凭据缺失同样会让后续上传失败，
-# 所以 --dry-run 一次把整条流水线需要的键都报出来。
-SELFCHECK = CORE + ["TG_API_ID", "TG_API_HASH", "TG_BOT_TOKEN", "TG_CHANNEL"]
 
 
 def main() -> int:
-    if "--dry-run" in sys.argv:
-        api.env_or_die(SELFCHECK)
-        return 0
     api.env_or_die(CORE)
-    source_id = os.environ["SOURCE_ID"]
+    if "--dry-run" in sys.argv:
+        return 0
     client = api.TroveApi(os.environ["API_BASE"], os.environ["TROVE_API_KEY"])
+    config.bootstrap(client)
+    source_id = os.environ["SOURCE_ID"]
 
     try:
         info = client.fetch_info(source_id)

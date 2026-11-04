@@ -21,8 +21,12 @@ import urllib.error
 import urllib.request
 import uuid
 
+from lib import bots
+
 API_ROOT = "https://api.telegram.org"
 MEDIA_GROUP_MAX = 10
+# sendMediaGroup 官方总大小上限 50MB；留 5MB 余量给 multipart 开销。
+MEDIA_GROUP_MAX_BYTES = 45 * 1024 * 1024
 
 
 class TgError(RuntimeError):
@@ -33,10 +37,12 @@ class TgError(RuntimeError):
 
 
 def _token(token: str | None = None) -> str:
-    tok = token or os.environ.get("TG_BOT_TOKEN", "")
-    if not tok:
-        raise TgError("TG_BOT_TOKEN missing")
-    return tok
+    if token:
+        return token
+    try:
+        return bots.master_token()
+    except bots.BotConfigError as e:
+        raise TgError(str(e)) from e
 
 
 def _multipart(fields: dict, files: list[tuple[str, str, str]]) -> tuple[bytes, str]:
@@ -58,32 +64,39 @@ def _multipart(fields: dict, files: list[tuple[str, str, str]]) -> tuple[bytes, 
     return bytes(out), f"multipart/form-data; boundary={boundary}"
 
 
-def bot_call(method: str, fields: dict | None = None, files: list[tuple[str, str, str]] | None = None, token: str | None = None) -> dict:
-    """调用 Bot API，返回 result；429 自动按 retry_after 重试一次。"""
+def bot_call(method: str, fields: dict | None = None, files: list[tuple[str, str, str]] | None = None, token: str | None = None, retries: int = 1) -> dict:
+    """调用 Bot API，返回 result；429 按 retry_after 重试（默认 1 次）。
+
+    批量上传分片时传 retries=3：Telegram 的 429 有时不带 retry_after，
+    固定退避 1s/3s 比立刻复发更稳。
+    """
     url = f"{API_ROOT}/bot{_token(token)}/{method}"
-    if files:
-        body, ctype = _multipart(fields or {}, files)
-        req = urllib.request.Request(url, data=body, headers={"Content-Type": ctype}, method="POST")
-    else:
-        payload = json.dumps(fields or {}).encode()
-        req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=300) as resp:
-            data = json.loads(resp.read().decode())
-    except urllib.error.HTTPError as e:
-        raw = e.read()
+    for attempt in range(max(1, retries + 1)):
+        if files:
+            body, ctype = _multipart(fields or {}, files)
+            req = urllib.request.Request(url, data=body, headers={"Content-Type": ctype}, method="POST")
+        else:
+            payload = json.dumps(fields or {}).encode()
+            req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
         try:
-            err = json.loads(raw.decode())
-        except Exception:
-            raise TgError(f"{method} failed: {e.code}") from None
-        if e.code == 429:
-            retry_after = int((err.get("parameters") or {}).get("retry_after") or 5)
-            time.sleep(min(retry_after, 60))
-            return bot_call(method, fields, files, token)
-        raise TgError(f"{method} failed: {err.get('description') or e.code}", code=e.code) from None
-    if not data.get("ok"):
-        raise TgError(f"{method} failed: {data.get('description')}")
-    return data["result"]
+            with urllib.request.urlopen(req, timeout=300) as resp:
+                data = json.loads(resp.read().decode())
+            if not data.get("ok"):
+                raise TgError(f"{method} failed: {data.get('description')}")
+            return data["result"]
+        except urllib.error.HTTPError as e:
+            raw = e.read()
+            try:
+                err = json.loads(raw.decode())
+            except Exception:
+                raise TgError(f"{method} failed: {e.code}") from None
+            if e.code == 429 and attempt < retries:
+                retry_after = int((err.get("parameters") or {}).get("retry_after") or 0)
+                wait = min(retry_after, 60) if retry_after > 0 else (1 if attempt == 0 else 3)
+                time.sleep(wait)
+                continue
+            raise TgError(f"{method} failed: {err.get('description') or e.code}", code=e.code) from None
+    raise TgError(f"{method} failed")
 
 
 def bot_send_document(path: str, chat_id: str, filename: str | None = None, caption: str | None = None, token: str | None = None) -> dict:
@@ -106,17 +119,33 @@ def bot_send_photo(path: str, chat_id: str, caption: str | None = None, token: s
     return {"message_id": res.get("message_id"), "file_id": best.get("file_id")}
 
 
+def _media_batches(paths: list[str], max_count: int = MEDIA_GROUP_MAX, max_bytes: int = MEDIA_GROUP_MAX_BYTES) -> list[list[str]]:
+    """按数量和总字节数双重上限切批，保证单次 sendMediaGroup ≤50MB。"""
+    batches: list[list[str]] = []
+    batch: list[str] = []
+    total = 0
+    for path in paths:
+        size = os.path.getsize(path)
+        if batch and (len(batch) >= max_count or total + size > max_bytes):
+            batches.append(batch)
+            batch, total = [], 0
+        batch.append(path)
+        total += size
+    if batch:
+        batches.append(batch)
+    return batches
+
+
 def bot_send_media_group(paths: list[str], chat_id: str, token: str | None = None) -> list[dict]:
-    """分片批量上传：每批 ≤10 个文件，回执逐个给出 file_id。
+    """分片批量上传：每批 ≤10 个文件且总大小 ≤45MB，回执逐个给出 file_id。
 
     Bot API 的 sendMediaGroup 每个 item 用 attach://fN 引用本批 multipart 里的文件。
     """
     out: list[dict] = []
-    for start in range(0, len(paths), MEDIA_GROUP_MAX):
-        batch = paths[start:start + MEDIA_GROUP_MAX]
+    for batch in _media_batches(paths):
         media = [{"type": "document", "media": f"attach://f{i}"} for i in range(len(batch))]
         files = [(f"f{i}", p, os.path.basename(p)) for i, p in enumerate(batch)]
-        res = bot_call("sendMediaGroup", {"chat_id": chat_id, "media": json.dumps(media)}, files, token)
+        res = bot_call("sendMediaGroup", {"chat_id": chat_id, "media": json.dumps(media)}, files, token, retries=3)
         for msg in res:
             doc = msg.get("document") or {}
             out.append({"message_id": msg.get("message_id"), "file_id": doc.get("file_id")})
@@ -156,7 +185,7 @@ def chat_ref(chat_id: str | int) -> int | str:
     return s
 
 
-def mtproto_upload(path: str, chat_id: str, caption: str | None = None, attempts: int = 6, filename: str | None = None) -> int:
+def mtproto_upload(path: str, chat_id: str, caption: str | None = None, attempts: int = 6, filename: str | None = None, token: str | None = None) -> int:
     """用 bot 账号把文件传进频道，返回 message_id（→ tg_mid）。
 
     Telethon 是 async API：整段跑在一个事件循环里（`asyncio.run`），
@@ -164,10 +193,10 @@ def mtproto_upload(path: str, chat_id: str, caption: str | None = None, attempts
     Telethon 只在真正需要时 import：解析/编排 job 不需要它。
     `filename` 用于覆盖 TG 文档名（默认取临时文件名，会让频道里显示 source.mp4）。
     """
-    return asyncio.run(_mtproto_upload(path, chat_id, caption, attempts, filename))
+    return asyncio.run(_mtproto_upload(path, chat_id, caption, attempts, filename, token))
 
 
-async def _mtproto_upload(path: str, chat_id: str, caption: str | None, attempts: int, filename: str | None) -> int:
+async def _mtproto_upload(path: str, chat_id: str, caption: str | None, attempts: int, filename: str | None, token: str | None = None) -> int:
     from telethon import TelegramClient  # noqa: PLC0415
     from telethon.errors import FloodWaitError  # noqa: PLC0415
     from telethon.sessions import StringSession  # noqa: PLC0415
@@ -186,7 +215,7 @@ async def _mtproto_upload(path: str, chat_id: str, caption: str | None, attempts
             await client.connect()
             client.parse_mode = None
             try:
-                await client.start(bot_token=_token())
+                await client.start(bot_token=_token(token))
                 msg = await client.send_file(
                     chat_ref(chat_id),
                     path,

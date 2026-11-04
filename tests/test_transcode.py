@@ -1,5 +1,15 @@
 """ffmpeg/ffprobe 原语参数契约测试——参数对齐旧 pipeline.mjs。"""
-from lib.transcode import build_ffmpeg_args, build_poster_args, parse_hls_index, parse_probe
+from lib.transcode import (
+    SEGMENT_SECONDS_MAX,
+    SEGMENT_SECONDS_MIN,
+    SegmentTooLarge,
+    build_ffmpeg_args,
+    build_poster_args,
+    parse_hls_index,
+    parse_probe,
+    segment_seconds,
+    validate_segment_files,
+)
 
 PROBE_FIXTURE = {
     "streams": [
@@ -36,13 +46,15 @@ def test_parse_probe_no_video_raises():
     raise AssertionError("source without video must raise")
 
 
-def test_ffmpeg_args_h264_aac_all_copy():
-    info = {"video_codec": "h264", "audio_codec": "aac", "has_audio": True}
-    args = build_ffmpeg_args("/tmp/src.mp4", info, "/tmp/out", "src-abc")
-    assert args[:4] == ["-y", "-hide_banner", "-i", "/tmp/src.mp4"]
+def test_ffmpeg_args_h264_aac_all_copy(tmp_path):
+    src = tmp_path / "src.mp4"
+    src.write_bytes(b"x" * 500_000)
+    info = {"video_codec": "h264", "audio_codec": "aac", "has_audio": True, "duration": 1}
+    args = build_ffmpeg_args(str(src), info, "/tmp/out", "src-abc")
+    assert args[:4] == ["-y", "-hide_banner", "-i", str(src)]
     assert args[args.index("-c:v") + 1] == "copy"
     assert args[args.index("-c:a") + 1] == "copy"
-    assert args[args.index("-hls_time") + 1] == "20"
+    assert SEGMENT_SECONDS_MIN <= int(args[args.index("-hls_time") + 1]) <= SEGMENT_SECONDS_MAX
     assert args[args.index("-hls_playlist_type") + 1] == "vod"
     assert args[args.index("-hls_flags") + 1] == "independent_segments"
     assert args[args.index("-hls_segment_filename") + 1] == "/tmp/out/src-abc-%05d.ts"
@@ -91,3 +103,43 @@ def test_parse_hls_index_pairs_extinf_with_file():
         {"file": "seg-00000.ts", "duration": 6.006},
         {"file": "seg-00001.ts", "duration": 5.5},
     ]
+
+
+def test_segment_seconds_clamps_low_bitrate_to_max(tmp_path):
+    src = tmp_path / "low.mp4"
+    src.write_bytes(b"x" * 125_000)  # 1 Mbps at 1s
+    assert segment_seconds(str(src), {"duration": 1}) == SEGMENT_SECONDS_MAX
+
+
+def test_segment_seconds_clamps_high_bitrate_to_min(tmp_path):
+    src = tmp_path / "high.mp4"
+    src.write_bytes(b"x" * 2_500_000)  # 20 Mbps at 1s
+    assert segment_seconds(str(src), {"duration": 1}) == SEGMENT_SECONDS_MIN
+
+
+def test_segment_seconds_targets_15mb(tmp_path):
+    src = tmp_path / "mid.mp4"
+    src.write_bytes(b"x" * 500_000)  # 4 Mbps at 1s
+    assert segment_seconds(str(src), {"duration": 1}) == 27
+
+
+def test_segment_seconds_targets_15mb_at_8mbps(tmp_path):
+    src = tmp_path / "mid8.mp4"
+    src.write_bytes(b"x" * 1_000_000)  # 8 Mbps at 1s
+    assert segment_seconds(str(src), {"duration": 1}) == 13
+
+
+def test_segment_seconds_falls_back_when_duration_missing(tmp_path):
+    src = tmp_path / "unknown.mp4"
+    src.write_bytes(b"x" * 10)
+    assert segment_seconds(str(src), {}) == SEGMENT_SECONDS_MAX
+
+
+def test_validate_segment_files_rejects_oversize(tmp_path):
+    src = tmp_path / "big.ts"
+    src.write_bytes(b"x" * 10)
+    try:
+        validate_segment_files([str(src)], limit=5)
+    except SegmentTooLarge:
+        return
+    raise AssertionError("oversize segment must raise SegmentTooLarge")

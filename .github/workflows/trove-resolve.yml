@@ -28,12 +28,4 @@ jobs:
           SOURCE_ID: ${{ github.event.client_payload.sourceId }}
           API_BASE: ${{ secrets.TROVE_API_BASE }}
           TROVE_API_KEY: ${{ secrets.TROVE_API_KEY }}
-          TG_API_ID: ${{ secrets.TG_API_ID }}
-          TG_API_HASH: ${{ secrets.TG_API_HASH }}
-          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
-          TG_CHANNEL: ${{ secrets.TG_CHANNEL }}
-          PORN91_COOKIE: ${{ secrets.PORN91_COOKIE }}
-          DOUYIN_COOKIE: ${{ secrets.DOUYIN_COOKIE }}
-          XHS_COOKIE: ${{ secrets.XHS_COOKIE }}
-          HAIJIAO_COOKIE: ${{ secrets.HAIJIAO_COOKIE }}
         run: python workers/resolve/job.py

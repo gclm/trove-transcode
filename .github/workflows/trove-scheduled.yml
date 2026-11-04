@@ -1,7 +1,8 @@
 name: trove-scheduled
 
-# 定时采集：collect job 只做「热点 → 去重 → 建任务 → 切片」，下载/转码/上传交给 matrix。
+# 定时采集：collect job 只做「热点 → 一次 batch 建任务 → 切片」，下载/转码/上传交给 matrix。
 # 分片并行：每个分片一个 runner，片内串行；失败片可单独 re-run。
+# 6 个上传 bot：Worker 的 BOTS 配置数组顺序决定槽位；仓库变量 COLLECT_BOT_SLOTS=0,1,2,3,4,5、COLLECT_PARALLEL=6。
 on:
   schedule:
     - cron: "30 18 * * *"   # UTC 18:30 = 北京 02:30
@@ -38,22 +39,33 @@ jobs:
         env:
           API_BASE: ${{ secrets.TROVE_API_BASE }}
           TROVE_API_KEY: ${{ secrets.TROVE_API_KEY }}
-          PORN91_COOKIE: ${{ secrets.PORN91_COOKIE }}
           COLLECT_LIMIT: ${{ github.event.inputs.limit || '72' }}
+          COLLECT_BOT_SLOTS: ${{ vars.COLLECT_BOT_SLOTS || '0' }}
+          COLLECT_SUMMARY_PATH: collect-summary.json
         run: |
           python workers/scheduled/collect91/job.py > shards.json
           cat shards.json
           echo "shards=$(cat shards.json)" >> "$GITHUB_OUTPUT"
-          echo "count=$(python -c 'import json,sys; print(sum(len(s) for s in json.load(open("shards.json"))))')" >> "$GITHUB_OUTPUT"
+          echo "count=$(python -c 'import json; print(sum(len(s["items"]) for s in json.load(open("shards.json"))))')" >> "$GITHUB_OUTPUT"
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          d = json.load(open("collect-summary.json"))
+          print("### collect")
+          print(f"- fresh: {d['fresh']}")
+          print(f"- created: {d['created']}")
+          print(f"- skipped: {d['skipped']}")
+          print(f"- items: {d['items']}")
+          PY
 
   pipeline:
     needs: collect
     if: needs.collect.outputs.count != '0'
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 240
     strategy:
       fail-fast: false
-      max-parallel: 2
+      # 仓库变量 COLLECT_PARALLEL：当前默认 2；6 个 bot 配好后设为 6。
+      max-parallel: ${{ fromJson(vars.COLLECT_PARALLEL || '2') }}
       matrix:
         shard: ${{ fromJson(needs.collect.outputs.shards) }}
     steps:
@@ -71,14 +83,13 @@ jobs:
           SHARD: ${{ toJson(matrix.shard) }}
           API_BASE: ${{ secrets.TROVE_API_BASE }}
           TROVE_API_KEY: ${{ secrets.TROVE_API_KEY }}
-          TG_API_ID: ${{ secrets.TG_API_ID }}
-          TG_API_HASH: ${{ secrets.TG_API_HASH }}
-          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
-          TG_CHANNEL: ${{ secrets.TG_CHANNEL }}
-          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
-          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          R2_BUCKET: ${{ secrets.R2_BUCKET }}
-          PORN91_COOKIE: ${{ secrets.PORN91_COOKIE }}
-          DOUYIN_COOKIE: ${{ secrets.DOUYIN_COOKIE }}
-        run: python workers/scheduled/collect91/pipeline.py
+        run: |
+          set -o pipefail
+          python workers/scheduled/collect91/pipeline.py | tee pipeline.json
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          d = json.load(open("pipeline.json"))
+          print("### shard pipeline")
+          print(f"- ok: {d.get('ok', 0)}")
+          print(f"- failed: {len(d.get('failed', []))}")
+          PY

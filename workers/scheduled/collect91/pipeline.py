@@ -12,14 +12,26 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
-from lib import api, resolve  # noqa: E402
+from lib import api, config, resolve, bots  # noqa: E402
 from packages.sites import registry  # noqa: E402
 from workers.upload.job import process as upload_process  # noqa: E402
 
 
-def run_shard(client: api.TroveApi, shard: list[dict], chat_id: str) -> dict:
+def _upload_token_for_slot(slot: int) -> str:
+    """按 BOTS JSON 的数组顺序取槽位 token。未配置的槽位直接失败，不静默串号。"""
+    try:
+        return bots.token_for_slot(slot)
+    except bots.BotConfigError as e:
+        raise RuntimeError(str(e)) from e
+
+
+def run_shard(client: api.TroveApi, shard: dict, chat_id: str, upload_token: str | None = None) -> dict:
     ok, failed = 0, []
-    for entry in shard:
+    slot = int(shard.get("slot", 0))
+    entries = shard.get("items") or []
+    if upload_token is None:
+        upload_token = _upload_token_for_slot(slot)
+    for entry in entries:
         source_id = entry.get("source_id")
         if not source_id:
             continue
@@ -29,19 +41,19 @@ def run_shard(client: api.TroveApi, shard: list[dict], chat_id: str) -> dict:
             if not link:
                 raise registry.ResolveError("unsupported-form", "task has no source_url")
 
+            # 每条只解析一次：元数据同时用于状态回报与 upload_process 的下载直链。
             meta = resolve.resolve_with_retry(link)
             client.patch(
                 source_id,
-                status="resolved",
-                name=meta.get("title"),
+                status="confirmed",
+                name=meta.get("title") or info.get("name"),
                 duration_s=meta.get("duration_s"),
                 poster_url=meta.get("poster_url"),
-                external_key=meta.get("external_key"),
+                external_key=meta.get("external_key") or entry.get("key"),
                 site=meta.get("site") or resolve.site_of(link),
             )
             # 定时采集无人值守：解析成功即视为确认（人工链接流程才等用户 PATCH confirmed）。
-            client.patch(source_id, status="confirmed")
-            upload_process(client, source_id, chat_id)
+            upload_process(client, source_id, chat_id, meta=meta, upload_token=upload_token, upload_slot=slot)
             ok += 1
         except Exception as e:  # noqa: BLE001 - 单条隔离
             failed.append({"source_id": source_id, "error": str(e)[:200]})
@@ -61,12 +73,15 @@ def main() -> int:
     except json.JSONDecodeError:
         print("SHARD is not valid JSON", file=sys.stderr)
         return 2
+    if isinstance(shard, list):  # 兼容旧 workflow 的裸数组 SHARD
+        shard = {"slot": 0, "items": shard}
     if "--dry-run" in sys.argv:
         api.env_or_die(["API_BASE", "TROVE_API_KEY"])
         print(json.dumps({"ok": 0, "failed": [], "dry_run": True}, ensure_ascii=False))
         return 0
-    api.env_or_die(["API_BASE", "TROVE_API_KEY", "TG_API_ID", "TG_API_HASH", "TG_BOT_TOKEN", "TG_CHANNEL", "R2_ENDPOINT", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET"])
+    api.env_or_die(["API_BASE", "TROVE_API_KEY"])
     client = api.TroveApi(os.environ["API_BASE"], os.environ["TROVE_API_KEY"])
+    config.bootstrap(client)
     result = run_shard(client, shard, os.environ["TG_CHANNEL"])
     print(json.dumps(result, ensure_ascii=False))
     return 0 if not result["failed"] else 1

@@ -13,6 +13,47 @@ import os
 import subprocess
 from typing import Any
 
+# Bot API getFile 的硬上限是 20MB；15MB 目标给码率波动留 25% 余量。
+SEGMENT_TARGET_BYTES = 15_000_000
+SEGMENT_MAX_BYTES = 19 * 1024 * 1024
+SEGMENT_SECONDS_MIN = 6
+SEGMENT_SECONDS_MAX = 30
+
+
+class SegmentTooLarge(ValueError):
+    """ffmpeg 切出的分片超过 Bot API getFile 的 20MB 上限。"""
+
+
+def segment_seconds(src: str, info: dict) -> int:
+    """按实际码率估算分片时长，把单分片压到 15MB 左右。
+
+    码率优先用 file_size/duration；file_size 缺失时用 ffprobe 的 bit_rate
+    （parse_probe 不输出它，这里直接读 info 或退回 2Mbps 保守值）。
+    """
+    duration = float(info.get("duration") or 0)
+    size = 0
+    try:
+        size = os.path.getsize(src)
+    except OSError:
+        pass
+    bit_rate = 0.0
+    if duration > 0 and size > 0:
+        bit_rate = size * 8 / duration
+    if bit_rate <= 0:
+        bit_rate = float(info.get("bit_rate") or 0)
+    if bit_rate <= 0:
+        bit_rate = 2_000_000
+    seconds = int(SEGMENT_TARGET_BYTES * 8 / bit_rate * 0.9)
+    return max(SEGMENT_SECONDS_MIN, min(SEGMENT_SECONDS_MAX, seconds))
+
+
+def validate_segment_files(paths: list[str], limit: int = SEGMENT_MAX_BYTES) -> None:
+    """上传前守住 Bot API 20MB 硬线；超限直接失败，让任务可重试而不是上传半残。"""
+    for path in paths:
+        size = os.path.getsize(path)
+        if size > limit:
+            raise SegmentTooLarge(f"segment {os.path.basename(path)} is {size} bytes (> {limit})")
+
 # ---- ffprobe / ffmpeg ---------------------------------------------------------
 
 
@@ -54,7 +95,7 @@ def build_ffmpeg_args(src: str, info: dict, outdir: str, prefix: str) -> list[st
         else:
             args += ["-c:a", "aac", "-b:a", "128k"]
     args += [
-        "-hls_time", "20",
+        "-hls_time", str(segment_seconds(src, info)),
         "-hls_playlist_type", "vod",
         "-hls_flags", "independent_segments",
         "-hls_segment_filename", os.path.join(outdir, f"{prefix}-%05d.ts"),
@@ -119,7 +160,8 @@ def make_poster(src: str, out: str, seek: str = "1") -> bool:
 def build_playlist(segments: list[dict], file_id: str) -> str:
     """按 plan §3.6 生成播放列表。
 
-    segments 元素：{seq, tg_file_id, size, duration}；空列表是错误（0 分片的视频无意义）。
+    segments 元素：{seq, tg_file_id, size, duration, bot_slot?}；空列表是错误（0 分片的视频无意义）。
+    bot_slot > 0 时分片 URL 追加 `&b=<slot>`；0 不写，保持旧播放列表兼容。
     """
     if not segments:
         raise ValueError("build_playlist requires at least one segment")
@@ -135,13 +177,17 @@ def build_playlist(segments: list[dict], file_id: str) -> str:
     for seg in ordered:
         seq = int(seg["seq"])
         lines.append(f"#EXTINF:{seg['duration']},")
-        lines.append(f"/dl/seg/{file_id}/{seq:03d}.ts?fid={seg['tg_file_id']}&sz={int(seg['size'])}")
+        url = f"/dl/seg/{file_id}/{seq:03d}.ts?fid={seg['tg_file_id']}&sz={int(seg['size'])}"
+        slot = int(seg.get("bot_slot") or 0)
+        if slot > 0:
+            url += f"&b={slot}"
+        lines.append(url)
     lines.append("#EXT-X-ENDLIST")
     return "\n".join(lines) + "\n"
 
 
-def segment_rows(segments: list[dict], file_id: str) -> list[dict]:
-    """本地分片清单 → 上报形状（seq 连续化 + 补齐 tg_file_id/size/duration）。"""
+def segment_rows(segments: list[dict], file_id: str, bot_slot: int = 0) -> list[dict]:
+    """本地分片清单 → 上报形状（seq 连续化 + 补齐 tg_file_id/size/duration/bot_slot）。"""
     rows = []
     for i, seg in enumerate(segments):
         rows.append({
@@ -149,6 +195,7 @@ def segment_rows(segments: list[dict], file_id: str) -> list[dict]:
             "tg_file_id": seg["tg_file_id"],
             "size": int(seg["size"]),
             "duration": float(seg["duration"]),
+            "bot_slot": int(seg.get("bot_slot", bot_slot)),
         })
     return rows
 

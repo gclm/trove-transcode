@@ -16,14 +16,14 @@ import os
 import shutil
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from lib import api, download, resolve, tg, transcode  # noqa: E402
+from lib import api, config, download, resolve, tg, transcode  # noqa: E402
 from lib.uuid7 import uuid7  # noqa: E402
 
-CORE = ["SOURCE_ID", "API_BASE", "TROVE_API_KEY", "TG_API_ID", "TG_API_HASH", "TG_BOT_TOKEN", "TG_CHANNEL"]
-R2_KEYS = ["R2_ENDPOINT", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET"]
+CORE = ["SOURCE_ID", "API_BASE", "TROVE_API_KEY"]
 
 
 def _kind_of(mime: str) -> str:
@@ -47,14 +47,15 @@ def _file_name(name: str | None, mime: str | None, fallback: str) -> str:
     return base
 
 
-def _source_of(client: api.TroveApi, info: dict) -> tuple[str, dict]:
+def _source_of(client: api.TroveApi, info: dict, meta: dict | None = None) -> tuple[str, dict]:
     """拿到可下载直链与请求头。
 
-    resolve 模式的任务，D1 里只存页面地址（不落直链/防盗链头），所以这里重新解析一次；
-    直链寿命远短于任务寿命，重新解析也比存下来可靠。
+    采集 pipeline 已解析过页面，会把 meta 传进来复用（每条只解析一次）；
+    standalone upload worker 没有 meta 时才按 source_url 重新解析。
     """
     if info.get("mode") == "resolve" and info.get("source_url"):
-        meta = resolve.resolve_with_retry(info["source_url"])
+        if meta is None:
+            meta = resolve.resolve_with_retry(info["source_url"])
         return meta["download_url"], meta.get("download_headers") or {}
     url = info.get("url") or ""
     if not url:
@@ -64,11 +65,12 @@ def _source_of(client: api.TroveApi, info: dict) -> tuple[str, dict]:
 
 def run() -> int:
     client = api.TroveApi(os.environ["API_BASE"], os.environ["TROVE_API_KEY"])
+    config.bootstrap(client)
     process(client, os.environ["SOURCE_ID"], os.environ["TG_CHANNEL"])
     return 0
 
 
-def process(client: api.TroveApi, source_id: str, chat_id: str) -> None:
+def process(client: api.TroveApi, source_id: str, chat_id: str, meta: dict | None = None, upload_token: str | None = None, upload_slot: int = 0) -> None:
     """把一个任务从「已确认」推到「已归档」；采集编排也复用这条路径。"""
     workdir = tempfile.mkdtemp(prefix="trove-upload-")
     try:
@@ -82,7 +84,7 @@ def process(client: api.TroveApi, source_id: str, chat_id: str) -> None:
         staged = client.artifact_url(source_id) if info.get("staged") else None
         headers: dict = {}
         if not staged:
-            staged, headers = _source_of(client, info)
+            staged, headers = _source_of(client, info, meta)
         local = os.path.join(workdir, "source" + os.path.splitext(file_name)[1])
         download.download(staged, local, headers=headers)
 
@@ -93,10 +95,10 @@ def process(client: api.TroveApi, source_id: str, chat_id: str) -> None:
             probe = None  # 非视频或 ffprobe 不可用：按原样直传
 
         if probe and probe.get("height"):
-            _upload_hls(client, source_id, local, workdir, name, file_name, mime, size, probe, chat_id, info.get("folder_id"))
+            _upload_hls(client, source_id, local, workdir, name, file_name, mime, size, probe, chat_id, info.get("folder_id"), upload_token, upload_slot)
         else:
             client.patch(source_id, status="uploading")
-            mid = tg.mtproto_upload(local, chat_id, caption=None, filename=file_name)
+            mid = tg.mtproto_upload(local, chat_id, caption=None, filename=file_name, token=upload_token)
             client.put_result(source_id, {
                 "tg_mid": mid,
                 "name": name,
@@ -110,7 +112,7 @@ def process(client: api.TroveApi, source_id: str, chat_id: str) -> None:
         shutil.rmtree(workdir, ignore_errors=True)
 
 
-def _upload_hls(client: api.TroveApi, source_id: str, local: str, workdir: str, name: str, file_name: str, mime: str, size: int, probe: dict, chat_id: str, info_folder: str | None = None) -> None:
+def _upload_hls(client: api.TroveApi, source_id: str, local: str, workdir: str, name: str, file_name: str, mime: str, size: int, probe: dict, chat_id: str, info_folder: str | None = None, upload_token: str | None = None, upload_slot: int = 0) -> None:
     client.patch(source_id, status="transcoding")
     file_id = uuid7()
     segdir = os.path.join(workdir, "hls")
@@ -118,41 +120,51 @@ def _upload_hls(client: api.TroveApi, source_id: str, local: str, workdir: str, 
 
     client.patch(source_id, status="uploading")
     seg_paths = [os.path.join(segdir, p["file"]) for p in parts]
-    receipts = tg.bot_send_media_group(seg_paths, chat_id)
-    if len(receipts) != len(seg_paths):
-        raise RuntimeError(f"segment upload mismatch: {len(receipts)}/{len(seg_paths)}")
-    segments = transcode.segment_rows(
-        [{"tg_file_id": r["file_id"], "size": os.path.getsize(p), "duration": part["duration"]}
-         for r, p, part in zip(receipts, seg_paths, parts)],
-        file_id,
-    )
-    if not all(s["tg_file_id"] for s in segments):
-        raise RuntimeError("segment upload returned no file_id")
+    transcode.validate_segment_files(seg_paths)
 
-    playlist = transcode.build_playlist(segments, file_id)
-    playlist_path = os.path.join(workdir, "index.m3u8")
-    with open(playlist_path, "w", encoding="utf-8") as fh:
-        fh.write(playlist)
-    # Worker 侧走 Bot API getFile(file_id) 读回 playlist —— 存 file_id，不存 message_id。
-    # playlist 与封面合成一组批量上传：一条 sendMediaGroup 拿两个 file_id，少一次 Bot 调用。
-    poster_path = os.path.join(workdir, "poster.jpg")
-    meta_paths = [playlist_path]
-    if transcode.make_poster(local, poster_path):
-        meta_paths.append(poster_path)
-    if len(meta_paths) > 1:
-        meta_receipts = tg.bot_send_media_group(meta_paths, chat_id)
-        if len(meta_receipts) != 2 or not all(r.get("file_id") for r in meta_receipts):
-            raise RuntimeError("playlist/poster upload returned no file_id")
-        m3u8_file_id = meta_receipts[0]["file_id"]
-        poster_file_id = meta_receipts[1]["file_id"]
-    else:
-        m3u8_file_id = tg.bot_send_document(playlist_path, chat_id, filename=f"{file_id}.m3u8")["file_id"]
-        poster_file_id = None
-    if not m3u8_file_id:
-        raise RuntimeError("playlist upload returned no file_id")
+    # 原档 MTProto 上传与分片 Bot API 上传并行；两者共用该 shard 的 bot，
+    # playlist/封面仍走主 bot，避免主 bot 被分片流量拖慢。
+    pool = ThreadPoolExecutor(max_workers=1)
+    original = pool.submit(tg.mtproto_upload, local, chat_id, None, 6, file_name, upload_token)
+    try:
+        receipts = tg.bot_send_media_group(seg_paths, chat_id, token=upload_token)
+        if len(receipts) != len(seg_paths):
+            raise RuntimeError(f"segment upload mismatch: {len(receipts)}/{len(seg_paths)}")
+        segments = transcode.segment_rows(
+            [{"tg_file_id": r["file_id"], "size": os.path.getsize(p), "duration": part["duration"]}
+             for r, p, part in zip(receipts, seg_paths, parts)],
+            file_id,
+            bot_slot=upload_slot,
+        )
+        if not all(s["tg_file_id"] for s in segments):
+            raise RuntimeError("segment upload returned no file_id")
 
-    # 原档也归档：详情页「原档播放」直取，不依赖 HLS。
-    tg_mid = tg.mtproto_upload(local, chat_id, filename=file_name)
+        playlist = transcode.build_playlist(segments, file_id)
+        playlist_path = os.path.join(workdir, "index.m3u8")
+        with open(playlist_path, "w", encoding="utf-8") as fh:
+            fh.write(playlist)
+        # Worker 侧走 Bot API getFile(file_id) 读回 playlist —— 存 file_id，不存 message_id。
+        # playlist 与封面合成一组批量上传：一条 sendMediaGroup 拿两个 file_id，少一次 Bot 调用。
+        poster_path = os.path.join(workdir, "poster.jpg")
+        meta_paths = [playlist_path]
+        if transcode.make_poster(local, poster_path):
+            meta_paths.append(poster_path)
+        if len(meta_paths) > 1:
+            meta_receipts = tg.bot_send_media_group(meta_paths, chat_id)
+            if len(meta_receipts) != 2 or not all(r.get("file_id") for r in meta_receipts):
+                raise RuntimeError("playlist/poster upload returned no file_id")
+            m3u8_file_id = meta_receipts[0]["file_id"]
+            poster_file_id = meta_receipts[1]["file_id"]
+        else:
+            m3u8_file_id = tg.bot_send_document(playlist_path, chat_id, filename=f"{file_id}.m3u8")["file_id"]
+            poster_file_id = None
+        if not m3u8_file_id:
+            raise RuntimeError("playlist upload returned no file_id")
+
+        # 原档也归档：详情页「原档播放」直取，不依赖 HLS。
+        tg_mid = original.result()
+    finally:
+        pool.shutdown(wait=True)
 
     client.put_hls(source_id, {
         "file_id": file_id,
@@ -168,12 +180,10 @@ def _upload_hls(client: api.TroveApi, source_id: str, local: str, workdir: str, 
         "folder_id": info_folder,
     })
 
-
 def main() -> int:
+    api.env_or_die(CORE)
     if "--dry-run" in sys.argv:
-        api.env_or_die(CORE + R2_KEYS)
         return 0
-    api.env_or_die(CORE + R2_KEYS)
     return run()
 
 
