@@ -22,13 +22,14 @@ class _FakeClient:
     def __init__(self, *a, **kw):
         self.parse_mode = None
 
-    async def __aenter__(self):
+    async def connect(self):
         return self
 
-    async def __aexit__(self, *exc):
-        return False
+    async def disconnect(self):
+        return None
 
     async def start(self, bot_token=None):
+        assert bot_token, "bot_token must be passed explicitly"
         return self
 
     async def send_file(self, *a, **kw):

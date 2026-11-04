@@ -163,8 +163,12 @@ async def _mtproto_upload(path: str, chat_id: str, caption: str | None, attempts
 
     for attempt in range(attempts):
         try:
-            async with TelegramClient(StringSession(session), api_id, api_hash) as client:
-                client.parse_mode = None
+            # 不能用 `async with`：TelegramClient.__aenter__ 会调 start() 且不带
+            # bot_token，非交互环境直接 input() → EOFError。显式 connect/start。
+            client = TelegramClient(StringSession(session), api_id, api_hash)
+            await client.connect()
+            client.parse_mode = None
+            try:
                 await client.start(bot_token=_token())
                 msg = await client.send_file(
                     chat_id,
@@ -174,6 +178,8 @@ async def _mtproto_upload(path: str, chat_id: str, caption: str | None, attempts
                     attributes=[DocumentAttributeFilename(file_name=name)],
                 )
                 return int(msg.id)
+            finally:
+                await client.disconnect()
         except FloodWaitError as e:  # 频道限流：等满再试
             if attempt == attempts - 1:
                 raise TgError(f"flood wait {e.seconds}s", code=429, retry_after=e.seconds) from None
