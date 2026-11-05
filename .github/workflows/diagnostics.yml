@@ -22,6 +22,43 @@ jobs:
             -H "Upgrade-Insecure-Requests: 1" "https://903.9p234.com/view_video.php?viewkey=fb57545243e76b64dd2c" || true
           echo "== player marker present? =="; grep -c "strencode2\|player_one" /tmp/p2.html || echo "0"
 
+  dump-title-fields:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install deps
+        run: pip install -r requirements.txt
+      - name: Dump 91porn title fields
+        run: |
+          python - <<'PY'
+          import httpx, re
+          from packages.sites.common import BROWSER_UA
+
+          URL = "https://903.9p234.com/view_video.php?viewkey=6d4b56e75372453917c7"
+          r = httpx.get(URL, headers={"User-Agent": BROWSER_UA}, follow_redirects=True, timeout=30)
+          html = r.text
+          print("status", r.status_code, "final", str(r.url), "len", len(html))
+          for name, pat in [
+              ("title", r"<title[^>]*>(.*?)</title>"),
+              ("h1", r"<h1[^>]*>(.*?)</h1>"),
+              ("og:title", r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)'),
+              ("description", r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)'),
+              ("video-title", r'class=["\'][^"\']*video[^"\']*title[^"\']*["\'][^>]*>(.*?)<'),
+          ]:
+              ms = re.findall(pat, html, re.I | re.S)
+              print(name, "count", len(ms), [re.sub(r"<[^>]+>", "", x).strip()[:200] for x in ms[:6]])
+          for pat in [r"video[_-]?title\s*[:=]\s*[\"']([^\"']{2,200})", r"title\s*[:=]\s*[\"']([^\"']{2,200})"]:
+              print("assignment", pat, [x[:200] for x in re.findall(pat, html, re.I)[:6]])
+          for kw in ("高颜值", "换妻", "反差"):
+              for m in re.finditer(kw, html):
+                  print("KW", kw, repr(html[max(0, m.start()-250):m.start()+350]))
+                  break
+          PY
+
   resolve-sample:
     runs-on: ubuntu-latest
     timeout-minutes: 8
