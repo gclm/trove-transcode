@@ -77,30 +77,37 @@ def decode_page_title(html: str) -> str | None:
     return re.sub(r"[\u200b-\u200f\u2060\ufeff\ufe00-\ufe0f]", "", title).strip()
 
 
+
+def _clean_title(value: str | None) -> str | None:
+    """清理站点标题噪声：零宽字符、反爬提示、推广尾巴与 URL。"""
+    if not value:
+        return None
+    value = re.sub(r"<[^>]+>", " ", value)
+    value = re.sub(r"[\u200b-\u200f\u2060\ufeff\ufe00-\ufe0f]", "", value)
+    value = re.sub(r"\s+", " ", value).strip()
+    for marker in ("91版主提醒您", "91版主提醒", "请到91P945", "请到 91P945"):
+        if marker in value:
+            value = value.split(marker)[0].strip()
+    value = re.sub(r"https?://\S+", "", value, flags=re.I)
+    value = re.sub(r"\b(?:t\.me|www\.)\S+", "", value, flags=re.I)
+    value = re.sub(r"\s*(?:电报|TG|Telegram|QQ|微信|私信|完整版|购买|下单|频道|资源群)[:：✈\s]*$", "", value, flags=re.I).strip()
+    value = re.sub(r"\s*[-–—]\s*91porn\s*$", "", value, flags=re.I).strip()
+    value = value.strip(" -–—|·:：,，。;；!?！？")
+    if not value or len(value) < 2:
+        return None
+    if any(x in value for x in ("精彩视频不断更新", "违法91规定", "Free video", "Free  video", "91porn")):
+        return None
+    return value
+
 def parse_page(html: str, page_url: str) -> dict:
     title_m = re.search(r"<title>([^<]+)</title>", html, re.I)
-    title = re.sub(r"\s*[-–]\s*91porn\s*$", "", title_m.group(1) if title_m else "").strip()
-    # 2026-11 起 91porn 把真实标题放在隐藏 payload 里；页面 <h1> 实际是站点 logo。
-    hidden_title = decode_page_title(html)
-    og = _re_search(r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)', html, re.I)
-    desc = _re_search(r'id=v_desc[^>]*>(.*?)</div>', html, re.I | re.S)
-    if desc:
-        desc = re.sub(r"<[^>]+>", " ", desc).strip()
-    candidates = [hidden_title, og, desc, title]
-    clean: list[str] = []
-    for value in candidates:
-        if not value:
-            continue
-        value = re.sub(r"[\u200b-\u200f\u2060\ufeff\ufe00-\ufe0f]", "", value)
-        value = re.sub(r"\s+", " ", value).strip()
-        if not value:
-            continue
-        if "91P945" in value or ("请到" in value and "观看" in value):
-            continue
-        if value in ("Free video", "Free  video", "91porn"):
-            continue
-        clean.append(value)
-    title = clean[0] if clean else (title or "91porn video")
+    page_title = _clean_title(title_m.group(1) if title_m else None)
+    # 标题优先级：页面 <title>（通常是真实标题）→ 隐藏 payload → og → v_desc。
+    hidden_title = _clean_title(decode_page_title(html))
+    og = _clean_title(_re_search(r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)', html, re.I))
+    desc = _clean_title(_re_search(r'id=v_desc[^>]*>(.*?)</div>', html, re.I | re.S))
+    candidates = [page_title, hidden_title, og, desc]
+    title = next((v for v in candidates if v), "91porn video")
 
     # 200 但无播放器：反爬拦截或游客每日配额页。
     if "strencode2" not in html and "player_one" not in html:
