@@ -177,6 +177,7 @@ def _upload_hls(client: api.TroveApi, source_id: str, local: str, workdir: str, 
             playlist_path, chat_id,
             filename=f"{os.path.splitext(file_name)[0]}.m3u8",
             caption=f"[Trove] {name} · 播放列表",
+            token=upload_token,
             thread_id=topics["video"],
             reply_to_message_id=tg_mid,
         )
