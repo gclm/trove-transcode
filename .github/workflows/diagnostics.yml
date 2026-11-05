@@ -53,11 +53,23 @@ jobs:
               print(name, "count", len(ms), [re.sub(r"<[^>]+>", "", x).strip()[:200] for x in ms[:6]])
           for pat in [r"video[_-]?title\s*[:=]\s*[\"']([^\"']{2,200})", r"title\s*[:=]\s*[\"']([^\"']{2,200})"]:
               print("assignment", pat, [x[:200] for x in re.findall(pat, html, re.I)[:6]])
+          hot = httpx.get("https://903.9p234.com/v.php?category=hot&viewtype=basic&page=1", headers={"User-Agent": BROWSER_UA}, follow_redirects=True, timeout=30).text
+          idx = hot.find("6d4b56e75372453917c7")
+          print("hot_has_viewkey", idx)
+          if idx >= 0:
+              print("HOT_SNIPPET", repr(re.sub(r"<[^>]+>", " | ", hot[max(0, idx-1200):idx+800])))
+          open("/tmp/page.html", "w", encoding="utf-8").write(html)
           for kw in ("高颜值", "换妻", "反差"):
               for m in re.finditer(kw, html):
                   print("KW", kw, repr(html[max(0, m.start()-250):m.start()+350]))
                   break
           PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 91porn-page
+          path: /tmp/page.html
+          retention-days: 1
 
   resolve-sample:
     runs-on: ubuntu-latest
