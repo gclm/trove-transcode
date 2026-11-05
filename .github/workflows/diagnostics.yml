@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   outbound-reachability:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Check 91porn reachability from runner
@@ -23,11 +23,11 @@ jobs:
           echo "== player marker present? =="; grep -c "strencode2\|player_one" /tmp/p2.html || echo "0"
 
   dump-title-fields:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - name: Install deps
@@ -80,7 +80,7 @@ jobs:
                   print("KW", kw, repr(html[max(0, m.start()-250):m.start()+350]))
                   break
           PY
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: 91porn-page
@@ -88,11 +88,11 @@ jobs:
           retention-days: 1
 
   resolve-sample:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 8
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - name: Install deps
