@@ -43,7 +43,7 @@ def test_91porn_strencode2_decode():
     assert r["download_url"] == STRENCODE_SRC
     assert r["external_key"] == "91porn:viewkey=fb57545243e76b64dd2c"
     assert r["poster_url"] == "https://img.example.com/p.jpg"
-    assert r["download_headers"]["Referer"] == "https://91porn.com/"
+    assert r["download_headers"]["Referer"] == "https://903.9p234.com/"
 
 
 def test_91porn_anti_bot_blocked():
@@ -62,7 +62,7 @@ def test_91porn_quota():
 
 def test_91porn_entry_from_key_roundtrip():
     url = _91.entry_from_key("91porn:viewkey=fb57545243e76b64dd2c")
-    assert url == "https://www.91porn.com/view_video.php?viewkey=fb57545243e76b64dd2c"
+    assert url == "https://903.9p234.com/view_video.php?viewkey=fb57545243e76b64dd2c"
 
 
 # ---------- douyin ----------

@@ -14,10 +14,10 @@ jobs:
       - name: Check 91porn reachability from runner
         run: |
           UA="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-          echo "== plain =="; curl -s -o /tmp/p.html -w "HTTP %{http_code}\n" -A "$UA" --compressed "https://91porn.com/" || true
+          echo "== plain =="; curl -s -o /tmp/p.html -w "HTTP %{http_code}\n" -A "$UA" --compressed "https://903.9p234.com/" || true
           echo "== full browser headers =="; curl -s -o /tmp/p2.html -w "HTTP %{http_code}\n" -A "$UA" --compressed \
             -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
             -H "Accept-Language: zh-CN,zh;q=0.9" \
             -H "Sec-Fetch-Dest: document" -H "Sec-Fetch-Mode: navigate" -H "Sec-Fetch-Site: none" \
-            -H "Upgrade-Insecure-Requests: 1" "https://91porn.com/view_video.php?viewkey=fb57545243e76b64dd2c" || true
+            -H "Upgrade-Insecure-Requests: 1" "https://903.9p234.com/view_video.php?viewkey=fb57545243e76b64dd2c" || true
           echo "== player marker present? =="; grep -c "strencode2\|player_one" /tmp/p2.html || echo "0"

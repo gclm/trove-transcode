@@ -8,6 +8,7 @@ runner；页面把直链藏在 document.write(strencode2("<percent-encoded <sour
 模块名以数字开头，只能 importlib.import_module("packages.sites.91porn") 加载。
 """
 
+import os
 import re
 from urllib.parse import quote, unquote, urlparse, parse_qs
 
@@ -16,7 +17,9 @@ import httpx
 from .common import BROWSER_UA, ResolveError, parse_hms
 
 SITE = "91porn"
-ENTRY_URL = "https://www.91porn.com/view_video.php?viewkey={vid}"
+# 2026-11-05 起 91porn 主站切到该镜像；旧 91porn.com 仅做兼容识别。
+BASE_URL = os.environ.get("SITE_91PORN_BASE", "https://903.9p234.com").rstrip("/")
+ENTRY_URL = f"{BASE_URL}/view_video.php?viewkey={{vid}}"
 
 
 def page_headers(cookie: str | None = None) -> dict:
@@ -41,8 +44,8 @@ def extract_id(page_url: str) -> str | None:
 
 
 def can_handle(url: str) -> bool:
-    host = urlparse(url).hostname or ""
-    return host in ("91porn.com", "www.91porn.com")
+    host = (urlparse(url).hostname or "").lower()
+    return host in ("91porn.com", "www.91porn.com", "9p234.com") or host.endswith(".9p234.com")
 
 
 def entry_from_key(external_key: str) -> str:
@@ -100,7 +103,7 @@ def parse_page(html: str, page_url: str) -> dict:
         "duration_s": duration,
         "poster_url": poster,
         "download_url": video_url,
-        "download_headers": {"User-Agent": BROWSER_UA, "Referer": "https://91porn.com/"},
+        "download_headers": {"User-Agent": BROWSER_UA, "Referer": f"{BASE_URL}/"},
         "mime": "video/mp4",
     }
 
@@ -170,7 +173,7 @@ def list_hot(cookie: str | None = None, limit: int = 72, pages: int = HOT_PAGES)
 async def _fetch_hot_page(page: int, cookie: str | None) -> str:
     from lib.web import fetch_page
 
-    url = f"https://www.91porn.com/v.php?category=hot&viewtype=basic&page={page}"
+    url = f"{BASE_URL}/v.php?category=hot&viewtype=basic&page={page}"
     res = await fetch_page(url, headers=page_headers(cookie))
     if res.status_code != 200:
         raise ResolveError("blocked", f"91porn hot page {page} HTTP {res.status_code}")
@@ -180,7 +183,7 @@ async def _fetch_hot_page(page: int, cookie: str | None) -> str:
 async def _fetch_home(cookie: str | None) -> str:
     from lib.web import fetch_page
 
-    res = await fetch_page("https://www.91porn.com/index.php", headers=page_headers(cookie))
+    res = await fetch_page(f"{BASE_URL}/index.php", headers=page_headers(cookie))
     if res.status_code != 200:
         raise ResolveError("blocked", f"91porn homepage HTTP {res.status_code}")
     return res.text
