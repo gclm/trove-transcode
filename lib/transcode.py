@@ -18,6 +18,8 @@ SEGMENT_TARGET_BYTES = 5_000_000
 SEGMENT_MAX_BYTES = 19 * 1024 * 1024
 SEGMENT_SECONDS_MIN = 3
 SEGMENT_SECONDS_MAX = 10
+# 关键帧间隔超过该阈值就重编码；copy 模式在部分源上会在关键帧边界跳切，实际分片超出 hls_time。
+COPY_KEYFRAME_GAP_MAX = 5.0
 
 
 class SegmentTooLarge(ValueError):
@@ -83,19 +85,29 @@ def parse_probe(fixture: dict) -> dict:
 
 
 def build_ffmpeg_args(src: str, info: dict, outdir: str, prefix: str) -> list[str]:
-    """HLS 切分参数：能 copy 就 copy，hevc/mp3 才重编码（对齐旧 pipeline.mjs）。"""
+    """HLS 切分参数：关键帧足够密才 copy，否则重编码并强制关键帧对齐分片时长。
+
+    只按 codec 判断会踩坑：h264 源的关键帧间隔经常 10–20s，copy + -hls_time
+    只能切在关键帧上，实际分片会超过 SEGMENT_SECONDS_MAX，首片/拖动都会变慢。
+    """
     args = ["-y", "-hide_banner", "-i", src]
-    if info.get("video_codec") == "h264":
+    seg = segment_seconds(src, info)
+    keyframe_gap = float(info.get("keyframe_gap") or 0)
+    can_copy = info.get("video_codec") == "h264" and keyframe_gap <= COPY_KEYFRAME_GAP_MAX
+    if can_copy:
         args += ["-c:v", "copy"]
     else:
-        args += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p"]
+        args += [
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
+            "-force_key_frames", f"expr:gte(t,n_forced*{seg})",
+        ]
     if info.get("has_audio"):
         if info.get("audio_codec") == "aac":
             args += ["-c:a", "copy"]
         else:
             args += ["-c:a", "aac", "-b:a", "128k"]
     args += [
-        "-hls_time", str(segment_seconds(src, info)),
+        "-hls_time", str(seg),
         "-hls_playlist_type", "vod",
         "-hls_flags", "independent_segments",
         "-hls_segment_filename", os.path.join(outdir, f"{prefix}-%05d.ts"),
@@ -131,11 +143,33 @@ def run(cmd: list[str], timeout: int = 3600) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
 
+def keyframe_gap(path: str) -> float:
+    """最大关键帧间隔（秒）。无法探测时返回 0，让调用方退回 copy。"""
+    p = run([
+        "ffprobe", "-v", "error", "-select_streams", "v:0", "-skip_frame", "nokey",
+        "-show_entries", "frame=best_effort_timestamp_time", "-of", "csv=p=0", path,
+    ], timeout=120)
+    if p.returncode != 0:
+        return 0.0
+    times = []
+    for line in p.stdout.splitlines():
+        try:
+            times.append(float(line.strip().rstrip(",")))
+        except ValueError:
+            continue
+    if len(times) < 2:
+        return 1e9
+    times.sort()
+    return max(b - a for a, b in zip(times, times[1:]))
+
+
 def probe(path: str) -> dict:
     p = run(["ffprobe", "-v", "error", "-print_format", "json", "-show_streams", "-show_format", path], timeout=120)
     if p.returncode != 0:
         raise RuntimeError(f"ffprobe failed: {p.stderr.strip()[:400]}")
-    return parse_probe(json.loads(p.stdout))
+    info = parse_probe(json.loads(p.stdout))
+    info["keyframe_gap"] = keyframe_gap(path)
+    return info
 
 
 def transcode_to_hls(src: str, outdir: str, prefix: str, info: dict) -> list[dict]:

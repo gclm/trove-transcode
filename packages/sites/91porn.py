@@ -53,6 +53,12 @@ def entry_from_key(external_key: str) -> str:
 def parse_page(html: str, page_url: str) -> dict:
     title_m = re.search(r"<title>([^<]+)</title>", html, re.I)
     title = re.sub(r"\s*[-–]\s*91porn\s*$", "", title_m.group(1) if title_m else "").strip()
+    # 91porn 的 <title> 有时被替换成反爬/导流文案；优先取页面正文标题。
+    og = _re_search(r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)', html, re.I)
+    h1 = _re_search(r"<h1[^>]*>(.*?)</h1>", html, re.I | re.S)
+    if h1:
+        h1 = re.sub(r"<[^>]+>", "", h1).strip()
+    title = (og or h1 or title).strip()
 
     # 200 但无播放器：反爬拦截或游客每日配额页。
     if "strencode2" not in html and "player_one" not in html:
