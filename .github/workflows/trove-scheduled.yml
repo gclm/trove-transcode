@@ -85,11 +85,14 @@ jobs:
           TROVE_API_KEY: ${{ secrets.TROVE_API_KEY }}
         run: |
           set -o pipefail
-          python workers/scheduled/collect91/pipeline.py | tee pipeline.json
+          python workers/scheduled/collect91/pipeline.py | tee pipeline.log
           python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import json
-          d = json.load(open("pipeline.json"))
+          lines = [line for line in open("pipeline.log") if line.strip()]
+          d = json.loads(lines[-1])
           print("### shard pipeline")
           print(f"- ok: {d.get('ok', 0)}")
           print(f"- failed: {len(d.get('failed', []))}")
+          for item in d.get("failed", []):
+              print(f"- FAILED `{item.get('source_id')}`: {item.get('error')}")
           PY
