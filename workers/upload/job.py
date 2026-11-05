@@ -147,8 +147,13 @@ def _upload_hls(client: api.TroveApi, source_id: str, local: str, workdir: str, 
     # 原档 MTProto 上传与分片 Bot API 上传并行；两者共用该 shard 的 bot，
     # playlist/封面仍走主 bot，避免主 bot 被分片流量拖慢。
     topics = tg.topics()
+    poster_path = os.path.join(workdir, "poster.jpg")
+    has_poster = transcode.make_poster(local, poster_path)
     pool = ThreadPoolExecutor(max_workers=1)
-    original = pool.submit(tg.mtproto_upload, local, chat_id, f"[Trove] {name} · 原档", 6, file_name, upload_token, topics["video"])
+    original = pool.submit(
+        tg.mtproto_upload, local, chat_id, f"[Trove] {name} · 原档", 6, file_name,
+        upload_token, topics["video"], probe, poster_path if has_poster else None,
+    )
     try:
         receipts = tg.bot_send_media_group(seg_paths, chat_id, token=upload_token, thread_id=topics["segments"])
         if len(receipts) != len(seg_paths):
@@ -180,9 +185,8 @@ def _upload_hls(client: api.TroveApi, source_id: str, local: str, workdir: str, 
         if not m3u8_file_id:
             raise RuntimeError("playlist upload returned no file_id")
 
-        poster_path = os.path.join(workdir, "poster.jpg")
         poster_file_id = None
-        if transcode.make_poster(local, poster_path):
+        if has_poster:
             poster_file_id = tg.bot_send_photo(poster_path, chat_id, caption=f"[Trove] {name} · 封面", thread_id=topics["image"]).get("file_id")
     finally:
         pool.shutdown(wait=True)

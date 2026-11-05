@@ -8,6 +8,7 @@ runner；页面把直链藏在 document.write(strencode2("<percent-encoded <sour
 模块名以数字开头，只能 importlib.import_module("packages.sites.91porn") 加载。
 """
 
+import base64
 import os
 import re
 from urllib.parse import quote, unquote, urlparse, parse_qs
@@ -33,8 +34,8 @@ def page_headers(cookie: str | None = None) -> dict:
         "Sec-Fetch-User": "?1",
         "Upgrade-Insecure-Requests": "1",
     }
-    if cookie:
-        headers["Cookie"] = cookie
+    # 91porn 默认给英文标题；中文标题需要语言 cookie。
+    headers["Cookie"] = cookie or "language=cn_CN; over18=1; CLIPSHARE=1"
     return headers
 
 
@@ -53,15 +54,56 @@ def entry_from_key(external_key: str) -> str:
     return ENTRY_URL.format(vid=vid)
 
 
+def _decode_hidden(value: str, mode: int, key: str) -> str:
+    if mode == 1:
+        raw = bytes.fromhex(value)
+    elif mode == 2:
+        raw = base64.b64decode(value[::-1])
+    else:
+        raw = base64.b64decode(value)
+    kb = key.encode()
+    return bytes(b ^ kb[i % len(kb)] for i, b in enumerate(raw)).decode("utf-8", "replace")
+
+
+def decode_page_title(html: str) -> str | None:
+    """解 91porn 的隐藏标题 payload（2026-11 反爬版本）。"""
+    m = re.search(
+        r'<i[^>]*data-ba760="([^"]+)"[^>]*data-ba760u="([^"]+)"[^>]*data-ba760d="([^"]+)"',
+        html, re.I,
+    )
+    if not m:
+        return None
+    script = re.search(r'var m=(\d+),id="[^"]+",at="data-ba760",k="([^"]+)"', html)
+    if not script:
+        return None
+    title = _decode_hidden(m.group(1), int(script.group(1)), script.group(2))
+    return re.sub(r"[\u200b\u200c\u200d\u2060\ufeff]", "", title).strip()
+
+
 def parse_page(html: str, page_url: str) -> dict:
     title_m = re.search(r"<title>([^<]+)</title>", html, re.I)
     title = re.sub(r"\s*[-–]\s*91porn\s*$", "", title_m.group(1) if title_m else "").strip()
-    # 91porn 的 <title> 有时被替换成反爬/导流文案；优先取页面正文标题。
+    # 2026-11 起 91porn 把真实标题放在隐藏 payload 里；页面 <h1> 实际是站点 logo。
+    hidden_title = decode_page_title(html)
     og = _re_search(r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)', html, re.I)
-    h1 = _re_search(r"<h1[^>]*>(.*?)</h1>", html, re.I | re.S)
-    if h1:
-        h1 = re.sub(r"<[^>]+>", "", h1).strip()
-    title = re.sub(r"\s+", " ", (og or h1 or title).strip())
+    desc = _re_search(r'id=v_desc[^>]*>(.*?)</div>', html, re.I | re.S)
+    if desc:
+        desc = re.sub(r"<[^>]+>", " ", desc).strip()
+    candidates = [hidden_title, og, desc, title]
+    clean: list[str] = []
+    for value in candidates:
+        if not value:
+            continue
+        value = re.sub(r"[\u200b\u200c\u200d\u2060\ufeff]", "", value)
+        value = re.sub(r"\s+", " ", value).strip()
+        if not value:
+            continue
+        if "91P945" in value or ("请到" in value and "观看" in value):
+            continue
+        if value in ("Free video", "Free  video", "91porn"):
+            continue
+        clean.append(value)
+    title = clean[0] if clean else (title or "91porn video")
 
     # 200 但无播放器：反爬拦截或游客每日配额页。
     if "strencode2" not in html and "player_one" not in html:
@@ -87,13 +129,21 @@ def parse_page(html: str, page_url: str) -> dict:
 
     poster = _re_search(r'<video[^>]*\bposter="([^"]+)"', html, re.I)
     # 时长有两种页面形态：`时长: 00:15:24` 与 `<span class="video-info-span">00:15:24</span>`。
-    duration = parse_hms(
+    hidden_duration = None
+    hm = re.search(r'<i[^>]*data-ba760d="([^"]+)"', html, re.I)
+    hm_script = re.search(r'var m=(\d+),id="[^"]+",at="data-ba760",k="([^"]+)"', html)
+    if hm and hm_script:
+        try:
+            hidden_duration = int(_decode_hidden(hm.group(1), int(hm_script.group(1)), hm_script.group(2)))
+        except Exception:
+            hidden_duration = None
+    duration = hidden_duration or parse_hms(
         _re_search(r"video-info-span[^>]*>\s*(\d{1,2}:\d{2}:\d{2})", html)
         or _re_search(r"时长[^<]*(?:<span[^>]*>)?\s*(\d{1,2}:\d{2}:\d{2})", html)
     )
 
     vid = extract_id(page_url)
-    display_title = title or "91porn video"
+    display_title = re.sub(r"\.mp4$", "", title, flags=re.I).strip() or "91porn video"
     # 91porn 的文件名跟页面标题走，扩展名固定 .mp4（用户 2026-11-04 定的规则）。
     safe_name = re.sub(r'[\\/:*?"<>|\r\n]+', "_", display_title).strip() or "91porn video"
     return {
