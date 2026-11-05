@@ -67,10 +67,7 @@ def _decode_hidden(value: str, mode: int, key: str) -> str:
 
 def decode_page_title(html: str) -> str | None:
     """解 91porn 的隐藏标题 payload（2026-11 反爬版本）。"""
-    m = re.search(
-        r'<i[^>]*data-ba760="([^"]+)"[^>]*data-ba760u="([^"]+)"[^>]*data-ba760d="([^"]+)"',
-        html, re.I,
-    )
+    m = re.search(r'<i[^>]*data-ba760="([^"]+)"', html, re.I)
     if not m:
         return None
     script = re.search(r'var m=(\d+),id="[^"]+",at="data-ba760",k="([^"]+)"', html)
