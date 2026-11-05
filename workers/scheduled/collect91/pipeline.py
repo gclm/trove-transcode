@@ -51,6 +51,11 @@ def run_shard(client: api.TroveApi, shard: dict, chat_id: str, upload_token: str
                 poster_url=meta.get("poster_url"),
                 external_key=meta.get("external_key") or entry.get("key"),
                 site=meta.get("site") or resolve.site_of(link),
+                author=meta.get("author"),
+                author_url=meta.get("author_url"),
+                published_at=meta.get("published_at"),
+                cover_url=meta.get("cover_url"),
+                source_url=meta.get("source_url") or link,
             )
             # 定时采集无人值守：解析成功即视为确认（人工链接流程才等用户 PATCH confirmed）。
             upload_process(client, source_id, chat_id, meta=meta, upload_token=upload_token, upload_slot=slot)

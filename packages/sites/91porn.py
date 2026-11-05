@@ -11,7 +11,7 @@ runner；页面把直链藏在 document.write(strencode2("<percent-encoded <sour
 import base64
 import os
 import re
-from urllib.parse import quote, unquote, urlparse, parse_qs
+from urllib.parse import quote, unquote, urljoin, urlparse, parse_qs
 
 import httpx
 
@@ -99,6 +99,59 @@ def _clean_title(value: str | None) -> str | None:
         return None
     return value
 
+
+def _abs_url(base: str, value: str | None) -> str | None:
+    if not value:
+        return None
+    value = value.strip()
+    if value.startswith("//"):
+        return "https:" + value
+    if value.startswith("/"):
+        return urljoin(base, value)
+    return value
+
+
+def _parse_author(html: str, base: str) -> tuple[str | None, str | None]:
+    """详情页 From 区：author 与 uprofile.php?UID=... 主页。"""
+    m = re.search(
+        r'From:\s*</span>\s*<span[^>]*class=["\']title-yakov["\'][^>]*>\s*'
+        r'<a[^>]+href=["\']([^"\']*uprofile\.php[^"\']*)["\'][^>]*>.*?'
+        r'<span[^>]*class=["\']title["\'][^>]*>(.*?)</span>',
+        html, re.I | re.S,
+    )
+    if not m:
+        m = re.search(r'From:\s*</span>\s*<a[^>]+href=["\']([^"\']*uprofile\.php[^"\']*)["\'][^>]*>(.*?)</a>', html, re.I | re.S)
+    if not m:
+        return None, None
+    author = _clean_title(re.sub(r"<[^>]+>", " ", m.group(2)))
+    return author, _abs_url(base, m.group(1))
+
+
+def _parse_published_at(html: str) -> str | None:
+    m = re.search(r'Added:\s*</span>\s*<span[^>]*>\s*(\d{4}-\d{2}-\d{2})\s*</span>', html, re.I)
+    if not m:
+        m = re.search(r'Added:\s*(\d{4}-\d{2}-\d{2})', html, re.I)
+    return f"{m.group(1)}T00:00:00" if m else None
+
+
+def _parse_cover(html: str, base: str) -> str | None:
+    poster = _re_search(r'<video[^>]*\bposter=["\']([^"\']+)', html, re.I)
+    return _abs_url(base, poster)
+
+
+def _video_url_from_html(html: str) -> str | None:
+    cipher = (
+        _re_search(r'strencode2\("([^"]+)"\)', html)
+        or _re_search(r'document\.write\("([^"]+)"\)', html)
+    )
+    if not cipher:
+        return None
+    try:
+        source_tag = unquote(cipher)
+    except Exception:
+        return None
+    return _re_search(r"src=['\"]([^'\"]+)", source_tag, re.I)
+
 def parse_page(html: str, page_url: str) -> dict:
     title_m = re.search(r"<title>([^<]+)</title>", html, re.I)
     page_title = _clean_title(title_m.group(1) if title_m else None)
@@ -131,7 +184,7 @@ def parse_page(html: str, page_url: str) -> dict:
     if not video_url:
         raise ResolveError("not-found", "91porn 页面未解出视频地址")
 
-    poster = _re_search(r'<video[^>]*\bposter="([^"]+)"', html, re.I)
+    poster = _parse_cover(html, BASE_URL)
     # 时长有两种页面形态：`时长: 00:15:24` 与 `<span class="video-info-span">00:15:24</span>`。
     hidden_duration = None
     hm = re.search(r'<i[^>]*data-ba760d="([^"]+)"', html, re.I)
@@ -146,6 +199,8 @@ def parse_page(html: str, page_url: str) -> dict:
         or _re_search(r"时长[^<]*(?:<span[^>]*>)?\s*(\d{1,2}:\d{2}:\d{2})", html)
     )
 
+    author, author_url = _parse_author(html, BASE_URL)
+    published_at = _parse_published_at(html)
     vid = extract_id(page_url)
     display_title = re.sub(r"\.mp4$", "", title, flags=re.I).strip() or "91porn video"
     # 91porn 的文件名跟页面标题走，扩展名固定 .mp4（用户 2026-11-04 定的规则）。
@@ -156,6 +211,11 @@ def parse_page(html: str, page_url: str) -> dict:
         "file_name": f"{safe_name}.mp4",
         "duration_s": duration,
         "poster_url": poster,
+        "cover_url": poster,
+        "author": author,
+        "author_url": author_url,
+        "published_at": published_at,
+        "source_url": page_url,
         "download_url": video_url,
         "download_headers": {"User-Agent": BROWSER_UA, "Referer": f"{BASE_URL}/"},
         "mime": "video/mp4",
@@ -177,7 +237,20 @@ async def resolve(page_url: str, cookie: str | None = None) -> dict:
             last = ResolveError("blocked", f"91porn returned HTTP {res.status_code}")
             continue
         try:
-            return parse_page(res.text, page_url)
+            meta = parse_page(res.text, page_url)
+            # HD 页通常由播放器 JS 注入；静态解析不到时保留 SD，不能因此判失败。
+            try:
+                hd_url = page_url.replace("/view_video.php?", "/view_video_hd.php?")
+                if hd_url != page_url:
+                    hd_res = await fetch_page(hd_url, headers=page_headers(cookie))
+                    if hd_res.status_code == 200:
+                        hd_src = _video_url_from_html(hd_res.text)
+                        if hd_src:
+                            meta["download_url"] = hd_src
+                            meta["quality_hint"] = "hd"
+            except Exception:
+                pass
+            return meta
         except ResolveError as exc:
             last = exc
             if exc.code not in ("quota", "blocked"):

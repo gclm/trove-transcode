@@ -96,6 +96,13 @@ def process(client: api.TroveApi, source_id: str, chat_id: str, meta: dict | Non
         folder_name = info.get("folder_name") or None
         source_site = info.get("source_site") or info.get("site") or None
         source_tag = info.get("source_tag") or None
+        metadata = {
+            "author": info.get("author"),
+            "author_url": info.get("author_url"),
+            "published_at": info.get("published_at"),
+            "source_url": info.get("source_url"),
+            "cover_url": info.get("cover_url"),
+        }
         archive_name = _archive_name(folder_name, name, file_name)
         client.patch(source_id, status="downloading")
 
@@ -114,7 +121,7 @@ def process(client: api.TroveApi, source_id: str, chat_id: str, meta: dict | Non
             probe = None  # 非视频或 ffprobe 不可用：按原样直传
 
         if probe and probe.get("height"):
-            _upload_hls(client, source_id, local, workdir, name, archive_name, mime, size, probe, chat_id, info.get("folder_id"), upload_token, upload_slot, folder_name, source_site, source_tag)
+            _upload_hls(client, source_id, local, workdir, name, archive_name, mime, size, probe, chat_id, info.get("folder_id"), upload_token, upload_slot, folder_name, source_site, source_tag, metadata)
         else:
             client.patch(source_id, status="uploading")
             kind = _kind_of(mime)
@@ -128,13 +135,14 @@ def process(client: api.TroveApi, source_id: str, chat_id: str, meta: dict | Non
                 "folder_id": info.get("folder_id"),
                 "source_site": source_site,
                 "source_tag": source_tag,
+                **metadata,
             })
         print(json.dumps({"ok": True, "source_id": source_id, "size": size}, ensure_ascii=False))
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
 
-def _upload_hls(client: api.TroveApi, source_id: str, local: str, workdir: str, name: str, file_name: str, mime: str, size: int, probe: dict, chat_id: str, info_folder: str | None = None, upload_token: str | None = None, upload_slot: int = 0, folder_name: str | None = None, source_site: str | None = None, source_tag: str | None = None) -> None:
+def _upload_hls(client: api.TroveApi, source_id: str, local: str, workdir: str, name: str, file_name: str, mime: str, size: int, probe: dict, chat_id: str, info_folder: str | None = None, upload_token: str | None = None, upload_slot: int = 0, folder_name: str | None = None, source_site: str | None = None, source_tag: str | None = None, metadata: dict | None = None) -> None:
     client.patch(source_id, status="transcoding")
     file_id = uuid7()
     segdir = os.path.join(workdir, "hls")
@@ -208,6 +216,7 @@ def _upload_hls(client: api.TroveApi, source_id: str, local: str, workdir: str, 
         "folder_id": info_folder,
         "source_site": source_site,
         "source_tag": source_tag,
+        **(metadata or {}),
     })
 
 def main() -> int:
