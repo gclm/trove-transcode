@@ -40,4 +40,15 @@ jobs:
           r = m.resolve_sync("https://903.9p234.com/view_video.php?viewkey=3061871b89041e7164d3&c=uyklk&viewtype=&category")
           print(json.dumps({k: r.get(k) for k in ("title", "file_name", "duration_s", "external_key")}, ensure_ascii=False))
           print("download_url_present", bool(r.get("download_url")))
+          import re, httpx
+          from packages.sites.common import BROWSER_UA
+          resp = httpx.get("https://903.9p234.com/view_video.php?viewkey=3061871b89041e7164d3&c=uyklk&viewtype=&category", headers={"User-Agent": BROWSER_UA}, follow_redirects=True, timeout=30)
+          html = resp.text
+          def one(p):
+              m = re.search(p, html, re.I | re.S)
+              return re.sub(r"<[^>]+>", "", m.group(1)).strip()[:200] if m else None
+          print("title_tag", one(r"<title>([^<]+)</title>"))
+          print("og_title", one(r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)'))
+          print("h1", one(r"<h1[^>]*>(.*?)</h1>"))
+          print("h1_count", len(re.findall(r"<h1", html, re.I)))
           PY
