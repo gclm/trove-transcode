@@ -59,6 +59,22 @@ jobs:
           if idx >= 0:
               print("HOT_SNIPPET", repr(re.sub(r"<[^>]+>", " | ", hot[max(0, idx-1200):idx+800])))
           open("/tmp/page.html", "w", encoding="utf-8").write(html)
+          import asyncio, importlib
+          from lib.web import fetch_page
+          m = importlib.import_module("packages.sites.91porn")
+          for test_url in [
+              "https://903.9p234.com/view_video.php?viewkey=6d4b56e75372453917c7",
+              "https://903.9p234.com/view_video.php?viewkey=6d4b56e75372453917c7&c=uyklk&viewtype=&category",
+          ]:
+              try:
+                  resp = asyncio.run(fetch_page(test_url, headers={"User-Agent": BROWSER_UA}))
+                  text = resp.text
+                  vd = re.search(r'id=v_desc[^>]*>(.*?)</div>', text, re.I | re.S)
+                  print("VARIANT", test_url, resp.status_code, len(text), "v_desc=", repr(re.sub(r"<[^>]+>", " ", vd.group(1)).strip()[:160]) if vd else None)
+                  rr = m.resolve_sync(test_url)
+                  print("RESOLVE", {k: rr.get(k) for k in ("title", "file_name", "duration_s")})
+              except Exception as e:
+                  print("VARIANT_ERROR", type(e).__name__, str(e)[:300])
           for kw in ("高颜值", "换妻", "反差"):
               for m in re.finditer(kw, html):
                   print("KW", kw, repr(html[max(0, m.start()-250):m.start()+350]))
