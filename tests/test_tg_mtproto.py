@@ -19,6 +19,8 @@ class _Msg:
 
 
 class _FakeClient:
+    last_kwargs = {}
+
     def __init__(self, *a, **kw):
         self.parse_mode = None
 
@@ -33,6 +35,7 @@ class _FakeClient:
         return self
 
     async def send_file(self, *a, **kw):
+        _FakeClient.last_kwargs = kw
         return _Msg()
 
 
@@ -47,6 +50,7 @@ def fake_telethon(monkeypatch, tmp_path):
     tl = types.ModuleType("telethon.tl")
     tlt = types.ModuleType("telethon.tl.types")
     tlt.DocumentAttributeFilename = lambda file_name=None: ("attr", file_name)
+    tlt.DocumentAttributeVideo = lambda **kw: ("video", kw)
     telethon.sessions, telethon.errors, telethon.tl = sessions, errors, tl
     tl.types = tlt
     monkeypatch.setitem(sys.modules, "telethon", telethon)
@@ -64,6 +68,19 @@ def fake_telethon(monkeypatch, tmp_path):
 
 def test_mtproto_upload_awaits_and_returns_message_id(fake_telethon):
     assert tg.mtproto_upload(fake_telethon, "-100123") == 4242
+
+
+def test_mtproto_upload_video_uses_video_attribute(fake_telethon):
+    _FakeClient.last_kwargs = {}
+    assert tg.mtproto_upload(
+        fake_telethon,
+        "-100123",
+        video_meta={"duration": 3, "width": 640, "height": 360},
+    ) == 4242
+    kw = _FakeClient.last_kwargs
+    assert kw["force_document"] is False
+    assert kw["attributes"][0][0] == "video"
+    assert kw["attributes"][0][1]["supports_streaming"] is True
 
 
 def test_chat_ref_numeric_string_becomes_int():
