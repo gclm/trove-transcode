@@ -49,7 +49,7 @@ def _file_name(name: str | None, mime: str | None, fallback: str) -> str:
 
 
 def _clean_name(value: str | None) -> str:
-    return re.sub(r"\s+", " ", (value or "").strip()).replace("/", "／")
+    return re.sub(r"\s+", " ", re.sub(r"[\u200b-\u200f\u2060\ufeff\ufe00-\ufe0f]", "", value or "").replace("\u3000", " ")).strip().replace("/", "／")
 
 
 def _archive_name(folder_name: str | None, title: str, original_name: str) -> str:

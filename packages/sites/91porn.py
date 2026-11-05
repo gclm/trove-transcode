@@ -77,7 +77,7 @@ def decode_page_title(html: str) -> str | None:
     if not script:
         return None
     title = _decode_hidden(m.group(1), int(script.group(1)), script.group(2))
-    return re.sub(r"[\u200b\u200c\u200d\u2060\ufeff]", "", title).strip()
+    return re.sub(r"[\u200b-\u200f\u2060\ufeff\ufe00-\ufe0f]", "", title).strip()
 
 
 def parse_page(html: str, page_url: str) -> dict:
@@ -94,7 +94,7 @@ def parse_page(html: str, page_url: str) -> dict:
     for value in candidates:
         if not value:
             continue
-        value = re.sub(r"[\u200b\u200c\u200d\u2060\ufeff]", "", value)
+        value = re.sub(r"[\u200b-\u200f\u2060\ufeff\ufe00-\ufe0f]", "", value)
         value = re.sub(r"\s+", " ", value).strip()
         if not value:
             continue
