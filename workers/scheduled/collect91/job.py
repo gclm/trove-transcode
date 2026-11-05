@@ -19,7 +19,7 @@ from workers.scheduled.collect91.shards import shard_items  # noqa: E402
 
 CORE = ["API_BASE", "TROVE_API_KEY"]
 HOT_LIMIT = int(os.environ.get("COLLECT_LIMIT", "72"))
-FOLDER_NAME = os.environ.get("COLLECT_FOLDER", "91pron")
+FOLDER_NAME = os.environ.get("COLLECT_FOLDER", "91porn")
 # 6 个上传 bot 配置好后设为 "0,1,2,3,4,5"；默认只用主 bot，避免未配置的槽位失败。
 BOT_SLOTS = [int(x) for x in os.environ.get("COLLECT_BOT_SLOTS", "0").split(",") if x.strip()]
 _91 = importlib.import_module("packages.sites.91porn")

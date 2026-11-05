@@ -11,3 +11,7 @@ def test_archive_name_without_folder_keeps_title():
 
 def test_archive_name_does_not_duplicate_known_extension():
     assert _archive_name("电视剧", "第一集.mp4", "source.mp4") == "电视剧 - 第一集.mp4"
+
+
+def test_archive_name_collapses_whitespace():
+    assert _archive_name("91porn", "Free  video", "source.mp4") == "91porn - Free video.mp4"

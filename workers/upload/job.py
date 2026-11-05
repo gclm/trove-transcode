@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import mimetypes
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -47,11 +48,15 @@ def _file_name(name: str | None, mime: str | None, fallback: str) -> str:
     return base
 
 
+def _clean_name(value: str | None) -> str:
+    return re.sub(r"\s+", " ", (value or "").strip()).replace("/", "／")
+
+
 def _archive_name(folder_name: str | None, title: str, original_name: str) -> str:
     """Archive name = "folder - title.ext" (folder absent → title.ext)."""
     ext = os.path.splitext(original_name)[1] or ".mp4"
-    clean_folder = (folder_name or "").strip().replace("/", "／")
-    clean_title = (title or "").strip().replace("/", "／")
+    clean_folder = _clean_name(folder_name)
+    clean_title = _clean_name(title)
     if clean_title.lower().endswith(ext.lower()):
         clean_title = clean_title[: -len(ext)]
     stem = f"{clean_folder} - {clean_title}" if clean_folder and clean_folder not in clean_title else clean_title

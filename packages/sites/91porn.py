@@ -61,7 +61,7 @@ def parse_page(html: str, page_url: str) -> dict:
     h1 = _re_search(r"<h1[^>]*>(.*?)</h1>", html, re.I | re.S)
     if h1:
         h1 = re.sub(r"<[^>]+>", "", h1).strip()
-    title = (og or h1 or title).strip()
+    title = re.sub(r"\s+", " ", (og or h1 or title).strip())
 
     # 200 但无播放器：反爬拦截或游客每日配额页。
     if "strencode2" not in html and "player_one" not in html:
