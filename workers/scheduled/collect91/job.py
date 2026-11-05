@@ -1,4 +1,4 @@
-"""91pron 定时采集编排 job（plan §5.6 第一步）。
+"""91porn 定时采集编排 job（plan §5.6 第一步）。
 
 只做编排，不下载：热点列表 → 去重 → 建 resolve 任务 → 输出 matrix 分片 JSON。
 真正下载/转码/上传在 pipeline job 里并行跑（每个分片一个 runner）。
@@ -26,7 +26,7 @@ _91 = importlib.import_module("packages.sites.91porn")
 
 
 def _folder_id(client, name: str = FOLDER_NAME) -> str:
-    """采集产物统一落「91pron」目录：先按名字找，找不到就建。"""
+    """采集产物统一落「91porn」目录：先按名字找，找不到就建。"""
     for folder in client.folders():
         if folder.get("name") == name:
             return folder["id"]
