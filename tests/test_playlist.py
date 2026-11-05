@@ -72,3 +72,13 @@ def test_playlist_appends_bot_slot_for_helper_bot():
 def test_segment_rows_keeps_bot_slot():
     rows = segment_rows([{"tg_file_id": "F", "size": 2, "duration": 3.0}], "X", bot_slot=4)
     assert rows[0]["bot_slot"] == 4
+
+
+def test_playlist_appends_mid_after_bot_slot():
+    segs = [{"seq": 0, "tg_file_id": "F", "size": 1, "duration": 2.0, "bot_slot": 3, "mid": 5501}]
+    assert "/dl/seg/X/000.ts?fid=F&sz=1&b=3&mid=5501" in build_playlist(segs, "X")
+
+
+def test_segment_rows_keeps_mid():
+    rows = segment_rows([{"tg_file_id": "F", "size": 2, "duration": 3.0, "mid": 5502}], "X")
+    assert rows[0]["mid"] == 5502

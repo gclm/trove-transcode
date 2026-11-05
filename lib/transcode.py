@@ -13,11 +13,11 @@ import os
 import subprocess
 from typing import Any
 
-# Bot API getFile 的硬上限是 20MB；15MB 目标给码率波动留 25% 余量。
-SEGMENT_TARGET_BYTES = 15_000_000
+# Bot API getFile 的硬上限是 20MB；5MB 目标把首包和回源等待压到最低。
+SEGMENT_TARGET_BYTES = 5_000_000
 SEGMENT_MAX_BYTES = 19 * 1024 * 1024
-SEGMENT_SECONDS_MIN = 6
-SEGMENT_SECONDS_MAX = 30
+SEGMENT_SECONDS_MIN = 3
+SEGMENT_SECONDS_MAX = 10
 
 
 class SegmentTooLarge(ValueError):
@@ -25,7 +25,7 @@ class SegmentTooLarge(ValueError):
 
 
 def segment_seconds(src: str, info: dict) -> int:
-    """按实际码率估算分片时长，把单分片压到 15MB 左右。
+    """按实际码率估算分片时长，把单分片压到 5MB 左右。
 
     码率优先用 file_size/duration；file_size 缺失时用 ffprobe 的 bit_rate
     （parse_probe 不输出它，这里直接读 info 或退回 2Mbps 保守值）。
@@ -160,8 +160,8 @@ def make_poster(src: str, out: str, seek: str = "1") -> bool:
 def build_playlist(segments: list[dict], file_id: str) -> str:
     """按 plan §3.6 生成播放列表。
 
-    segments 元素：{seq, tg_file_id, size, duration, bot_slot?}；空列表是错误（0 分片的视频无意义）。
-    bot_slot > 0 时分片 URL 追加 `&b=<slot>`；0 不写，保持旧播放列表兼容。
+    segments 元素：{seq, tg_file_id, size, duration, bot_slot?, mid?}；空列表是错误（0 分片的视频无意义）。
+    bot_slot > 0 时分片 URL 追加 `&b=<slot>`；topic message id 存在时追加 `&mid=<id>`。
     """
     if not segments:
         raise ValueError("build_playlist requires at least one segment")
@@ -181,6 +181,9 @@ def build_playlist(segments: list[dict], file_id: str) -> str:
         slot = int(seg.get("bot_slot") or 0)
         if slot > 0:
             url += f"&b={slot}"
+        mid = int(seg.get("mid") or 0)
+        if mid > 0:
+            url += f"&mid={mid}"
         lines.append(url)
     lines.append("#EXT-X-ENDLIST")
     return "\n".join(lines) + "\n"
@@ -196,6 +199,7 @@ def segment_rows(segments: list[dict], file_id: str, bot_slot: int = 0) -> list[
             "size": int(seg["size"]),
             "duration": float(seg["duration"]),
             "bot_slot": int(seg.get("bot_slot", bot_slot)),
+            "mid": int(seg.get("mid") or 0),
         })
     return rows
 

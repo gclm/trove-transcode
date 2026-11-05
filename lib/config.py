@@ -36,6 +36,7 @@ def apply(data: dict) -> None:
         "TG_API_HASH": str(data.get("tg_api_hash") or ""),
         "TG_CHANNEL": str(data.get("tg_channel") or ""),
         "BOTS": json.dumps(bots, ensure_ascii=False),
+        "TG_TOPICS": json.dumps(data.get("tg_topics") or {}, ensure_ascii=False),
     }
     cookies = data.get("cookies") or {}
     for key in ("PORN91_COOKIE", "DOUYIN_COOKIE", "XHS_COOKIE", "HAIJIAO_COOKIE"):

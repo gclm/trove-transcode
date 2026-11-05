@@ -52,7 +52,7 @@ def main() -> int:
     for key in keys:
         entry = _91.entry_from_key(key)
         if entry:
-            items.append({"url": entry, "external_key": key})
+            items.append({"url": entry, "external_key": key, "source_site": "91porn", "source_tag": "当前最热"})
     if not items:
         print("[]")
         return 0

@@ -117,16 +117,16 @@ def test_segment_seconds_clamps_high_bitrate_to_min(tmp_path):
     assert segment_seconds(str(src), {"duration": 1}) == SEGMENT_SECONDS_MIN
 
 
-def test_segment_seconds_targets_15mb(tmp_path):
+def test_segment_seconds_targets_5mb(tmp_path):
     src = tmp_path / "mid.mp4"
     src.write_bytes(b"x" * 500_000)  # 4 Mbps at 1s
-    assert segment_seconds(str(src), {"duration": 1}) == 27
+    assert segment_seconds(str(src), {"duration": 1}) == 9
 
 
-def test_segment_seconds_targets_15mb_at_8mbps(tmp_path):
+def test_segment_seconds_targets_5mb_at_8mbps(tmp_path):
     src = tmp_path / "mid8.mp4"
     src.write_bytes(b"x" * 1_000_000)  # 8 Mbps at 1s
-    assert segment_seconds(str(src), {"duration": 1}) == 13
+    assert segment_seconds(str(src), {"duration": 1}) == 4
 
 
 def test_segment_seconds_falls_back_when_duration_missing(tmp_path):

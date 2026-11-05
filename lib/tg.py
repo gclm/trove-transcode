@@ -28,6 +28,21 @@ MEDIA_GROUP_MAX = 10
 # sendMediaGroup 官方总大小上限 50MB；留 5MB 余量给 multipart 开销。
 MEDIA_GROUP_MAX_BYTES = 45 * 1024 * 1024
 
+TOPIC_KINDS = ("video", "segments", "image", "audio", "file")
+
+
+def topics() -> dict[str, int]:
+    """Read TG_TOPICS from the runner environment; fail loudly on bad config."""
+    raw = os.environ.get("TG_TOPICS") or ""
+    try:
+        value = json.loads(raw)
+        out = {kind: int(value[kind]) for kind in TOPIC_KINDS}
+    except (TypeError, ValueError, KeyError):
+        raise TgError("TG_TOPICS is missing or invalid; expected all of video/segments/image/audio/file")
+    if any(v <= 0 for v in out.values()):
+        raise TgError("TG_TOPICS contains a non-positive topic id")
+    return out
+
 
 class TgError(RuntimeError):
     def __init__(self, message: str, code: int = 0, retry_after: int = 0):
@@ -99,20 +114,26 @@ def bot_call(method: str, fields: dict | None = None, files: list[tuple[str, str
     raise TgError(f"{method} failed")
 
 
-def bot_send_document(path: str, chat_id: str, filename: str | None = None, caption: str | None = None, token: str | None = None) -> dict:
+def bot_send_document(path: str, chat_id: str, filename: str | None = None, caption: str | None = None, token: str | None = None, thread_id: int | None = None, reply_to_message_id: int | None = None) -> dict:
     """≤20MB 非视频 / playlist / 任意文档 → {message_id, file_id}。"""
     fields = {"chat_id": chat_id}
     if caption:
         fields["caption"] = caption
+    if thread_id:
+        fields["message_thread_id"] = str(int(thread_id))
+    if reply_to_message_id:
+        fields["reply_parameters"] = json.dumps({"message_id": int(reply_to_message_id)})
     res = bot_call("sendDocument", fields, [("document", path, filename or os.path.basename(path))], token)
     doc = res.get("document") or {}
     return {"message_id": res.get("message_id"), "file_id": doc.get("file_id")}
 
 
-def bot_send_photo(path: str, chat_id: str, caption: str | None = None, token: str | None = None) -> dict:
+def bot_send_photo(path: str, chat_id: str, caption: str | None = None, token: str | None = None, thread_id: int | None = None) -> dict:
     fields = {"chat_id": chat_id}
     if caption:
         fields["caption"] = caption
+    if thread_id:
+        fields["message_thread_id"] = str(int(thread_id))
     res = bot_call("sendPhoto", fields, [("photo", path, os.path.basename(path))], token)
     photos = res.get("photo") or []
     best = photos[-1] if photos else {}
@@ -136,7 +157,7 @@ def _media_batches(paths: list[str], max_count: int = MEDIA_GROUP_MAX, max_bytes
     return batches
 
 
-def bot_send_media_group(paths: list[str], chat_id: str, token: str | None = None) -> list[dict]:
+def bot_send_media_group(paths: list[str], chat_id: str, token: str | None = None, thread_id: int | None = None) -> list[dict]:
     """分片批量上传：每批 ≤10 个文件且总大小 ≤45MB，回执逐个给出 file_id。
 
     Bot API 的 sendMediaGroup 每个 item 用 attach://fN 引用本批 multipart 里的文件。
@@ -145,7 +166,10 @@ def bot_send_media_group(paths: list[str], chat_id: str, token: str | None = Non
     for batch in _media_batches(paths):
         media = [{"type": "document", "media": f"attach://f{i}"} for i in range(len(batch))]
         files = [(f"f{i}", p, os.path.basename(p)) for i, p in enumerate(batch)]
-        res = bot_call("sendMediaGroup", {"chat_id": chat_id, "media": json.dumps(media)}, files, token, retries=3)
+        fields = {"chat_id": chat_id, "media": json.dumps(media)}
+        if thread_id:
+            fields["message_thread_id"] = str(int(thread_id))
+        res = bot_call("sendMediaGroup", fields, files, token, retries=3)
         for msg in res:
             doc = msg.get("document") or {}
             out.append({"message_id": msg.get("message_id"), "file_id": doc.get("file_id")})
@@ -185,7 +209,7 @@ def chat_ref(chat_id: str | int) -> int | str:
     return s
 
 
-def mtproto_upload(path: str, chat_id: str, caption: str | None = None, attempts: int = 6, filename: str | None = None, token: str | None = None) -> int:
+def mtproto_upload(path: str, chat_id: str, caption: str | None = None, attempts: int = 6, filename: str | None = None, token: str | None = None, thread_id: int | None = None) -> int:
     """用 bot 账号把文件传进频道，返回 message_id（→ tg_mid）。
 
     Telethon 是 async API：整段跑在一个事件循环里（`asyncio.run`），
@@ -193,10 +217,10 @@ def mtproto_upload(path: str, chat_id: str, caption: str | None = None, attempts
     Telethon 只在真正需要时 import：解析/编排 job 不需要它。
     `filename` 用于覆盖 TG 文档名（默认取临时文件名，会让频道里显示 source.mp4）。
     """
-    return asyncio.run(_mtproto_upload(path, chat_id, caption, attempts, filename, token))
+    return asyncio.run(_mtproto_upload(path, chat_id, caption, attempts, filename, token, thread_id))
 
 
-async def _mtproto_upload(path: str, chat_id: str, caption: str | None, attempts: int, filename: str | None, token: str | None = None) -> int:
+async def _mtproto_upload(path: str, chat_id: str, caption: str | None, attempts: int, filename: str | None, token: str | None = None, thread_id: int | None = None) -> int:
     from telethon import TelegramClient  # noqa: PLC0415
     from telethon.errors import FloodWaitError  # noqa: PLC0415
     from telethon.sessions import StringSession  # noqa: PLC0415
@@ -222,6 +246,7 @@ async def _mtproto_upload(path: str, chat_id: str, caption: str | None, attempts
                     caption=caption,
                     force_document=True,
                     attributes=[DocumentAttributeFilename(file_name=name)],
+                    reply_to=thread_id if thread_id else None,
                 )
                 return int(msg.id)
             finally:
