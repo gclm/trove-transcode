@@ -21,3 +21,23 @@ jobs:
             -H "Sec-Fetch-Dest: document" -H "Sec-Fetch-Mode: navigate" -H "Sec-Fetch-Site: none" \
             -H "Upgrade-Insecure-Requests: 1" "https://903.9p234.com/view_video.php?viewkey=fb57545243e76b64dd2c" || true
           echo "== player marker present? =="; grep -c "strencode2\|player_one" /tmp/p2.html || echo "0"
+
+  resolve-sample:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install deps
+        run: pip install -r requirements.txt
+      - name: Resolve latest 91porn URL
+        run: |
+          python - <<'PY'
+          import importlib, json
+          m = importlib.import_module("packages.sites.91porn")
+          r = m.resolve_sync("https://903.9p234.com/view_video.php?viewkey=3061871b89041e7164d3&c=uyklk&viewtype=&category")
+          print(json.dumps({k: r.get(k) for k in ("title", "file_name", "duration_s", "external_key")}, ensure_ascii=False))
+          print("download_url_present", bool(r.get("download_url")))
+          PY
