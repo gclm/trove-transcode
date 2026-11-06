@@ -176,6 +176,15 @@ def bot_send_media_group(paths: list[str], chat_id: str, token: str | None = Non
     return out
 
 
+def bot_delete_messages(chat_id: str, message_ids: list[int | None], token: str | None = None) -> None:
+    """Delete messages in batches of 100 (Bot API limit); used to roll back a failed upload batch."""
+    ids = [int(m) for m in message_ids if m]
+    for i in range(0, len(ids), 100):
+        bot_call("deleteMessages", {"chat_id": chat_id, "message_ids": ids[i:i + 100]}, token=token)
+        if i + 100 < len(ids):
+            time.sleep(0.3)
+
+
 def bot_get_file_bytes(file_id: str, token: str | None = None) -> bytes:
     info = bot_call("getFile", {"file_id": file_id}, None, token)
     path = info.get("file_path")

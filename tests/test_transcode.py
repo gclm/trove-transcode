@@ -4,6 +4,7 @@ from lib.transcode import (
     SEGMENT_SECONDS_MIN,
     SegmentTooLarge,
     build_ffmpeg_args,
+    build_playlist,
     build_poster_args,
     parse_hls_index,
     parse_probe,
@@ -65,8 +66,8 @@ def test_ffmpeg_args_hevc_transcodes_video():
     info = {"video_codec": "hevc", "audio_codec": "aac", "has_audio": True}
     args = build_ffmpeg_args("/s", info, "/o", "p")
     assert args[args.index("-c:v") + 1] == "libx264"
-    assert args[args.index("-preset") + 1] == "veryfast"
-    assert args[args.index("-crf") + 1] == "23"
+    assert args[args.index("-preset") + 1] == "medium"
+    assert args[args.index("-crf") + 1] == "19"
     assert args[args.index("-pix_fmt") + 1] == "yuv420p"
     # audio aac stays copy
     assert args[args.index("-c:a") + 1] == "copy"
@@ -119,8 +120,8 @@ def test_segment_seconds_clamps_high_bitrate_to_min(tmp_path):
 
 def test_segment_seconds_targets_5mb(tmp_path):
     src = tmp_path / "mid.mp4"
-    src.write_bytes(b"x" * 500_000)  # 4 Mbps at 1s
-    assert segment_seconds(str(src), {"duration": 1}) == 9
+    src.write_bytes(b"x" * 500_000)  # 4 Mbps at 1s -> 9s, clamped to 6
+    assert segment_seconds(str(src), {"duration": 1}) == SEGMENT_SECONDS_MAX
 
 
 def test_segment_seconds_targets_5mb_at_8mbps(tmp_path):
@@ -143,3 +144,26 @@ def test_validate_segment_files_rejects_oversize(tmp_path):
     except SegmentTooLarge:
         return
     raise AssertionError("oversize segment must raise SegmentTooLarge")
+
+
+def test_ffmpeg_args_copies_when_keyframe_gap_is_ten():
+    info = {"video_codec": "h264", "audio_codec": "aac", "has_audio": True, "keyframe_gap": 10.0}
+    args = build_ffmpeg_args("/s", info, "/o", "p")
+    assert args[args.index("-c:v") + 1] == "copy"
+
+
+def test_ffmpeg_args_transcodes_when_keyframe_gap_exceeds_ten():
+    info = {"video_codec": "h264", "audio_codec": "aac", "has_audio": True, "keyframe_gap": 10.1}
+    args = build_ffmpeg_args("/s", info, "/o", "p")
+    assert args[args.index("-c:v") + 1] == "libx264"
+
+
+def test_build_playlist_uses_relative_segment_urls():
+    text = build_playlist([
+        {"seq": 0, "tg_file_id": "AAA", "size": 100, "duration": 6.0, "bot_slot": 1, "mid": 42},
+        {"seq": 1, "tg_file_id": "BBB", "size": 200, "duration": 5.5},
+    ], "file-id")
+    assert "000.ts" in text
+    assert "001.ts" in text
+    assert "?fid=" not in text
+    assert "/dl/seg/" not in text

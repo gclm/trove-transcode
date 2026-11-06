@@ -17,9 +17,9 @@ from typing import Any
 SEGMENT_TARGET_BYTES = 5_000_000
 SEGMENT_MAX_BYTES = 19 * 1024 * 1024
 SEGMENT_SECONDS_MIN = 3
-SEGMENT_SECONDS_MAX = 10
+SEGMENT_SECONDS_MAX = 6
 # 关键帧间隔超过该阈值就重编码；copy 模式在部分源上会在关键帧边界跳切，实际分片超出 hls_time。
-COPY_KEYFRAME_GAP_MAX = 5.0
+COPY_KEYFRAME_GAP_MAX = 10.0
 
 
 class SegmentTooLarge(ValueError):
@@ -98,7 +98,7 @@ def build_ffmpeg_args(src: str, info: dict, outdir: str, prefix: str) -> list[st
         args += ["-c:v", "copy"]
     else:
         args += [
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
+            "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-pix_fmt", "yuv420p",
             "-force_key_frames", f"expr:gte(t,n_forced*{seg})",
         ]
     if info.get("has_audio"):
@@ -191,11 +191,12 @@ def make_poster(src: str, out: str, seek: str = "1") -> bool:
 # ---- playlist -----------------------------------------------------------------
 
 
-def build_playlist(segments: list[dict], file_id: str) -> str:
-    """按 plan §3.6 生成播放列表。
+def build_playlist(segments: list[dict], file_id: str = "") -> str:
+    """按 PLAN-012 生成相对路径播放列表。
 
     segments 元素：{seq, tg_file_id, size, duration, bot_slot?, mid?}；空列表是错误（0 分片的视频无意义）。
-    bot_slot > 0 时分片 URL 追加 `&b=<slot>`；topic message id 存在时追加 `&mid=<id>`。
+    分片 URL 使用相对路径 `<seq>.ts`，由 /hls/<id>/index.m3u8 所在目录解析；
+    tg_file_id/size/mid 由 job.py 随 PUT /tasks/:id/hls 上报到 D1 `segment_mids`。
     """
     if not segments:
         raise ValueError("build_playlist requires at least one segment")
@@ -211,14 +212,7 @@ def build_playlist(segments: list[dict], file_id: str) -> str:
     for seg in ordered:
         seq = int(seg["seq"])
         lines.append(f"#EXTINF:{seg['duration']},")
-        url = f"/dl/seg/{file_id}/{seq:03d}.ts?fid={seg['tg_file_id']}&sz={int(seg['size'])}"
-        slot = int(seg.get("bot_slot") or 0)
-        if slot > 0:
-            url += f"&b={slot}"
-        mid = int(seg.get("mid") or 0)
-        if mid > 0:
-            url += f"&mid={mid}"
-        lines.append(url)
+        lines.append(f"{seq:03d}.ts")
     lines.append("#EXT-X-ENDLIST")
     return "\n".join(lines) + "\n"
 

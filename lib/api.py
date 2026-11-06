@@ -84,11 +84,28 @@ class TroveApi:
         if body:
             self._request("PATCH", f"/api/v1/tasks/{source_id}", body)
 
+    def _put_retry(self, path: str, payload: dict, retries: int = 3) -> dict:
+        """幂等 PUT：网络抖动/5xx 时 1s/2s/4s 退避重试，服务端按 batch_id 去重。"""
+        last: Exception | None = None
+        for attempt in range(retries):
+            try:
+                return self._json("PUT", path, payload).get("data") or {}
+            except ApiError as e:
+                last = e
+                if e.status < 500:
+                    raise
+            except Exception as e:  # noqa: BLE001 - network errors are retryable
+                last = e
+            if attempt + 1 < retries:
+                time.sleep(2 ** attempt)
+        assert last is not None
+        raise last
+
     def put_hls(self, source_id: str, payload: dict) -> dict:
-        return self._json("PUT", f"/api/v1/tasks/{source_id}/hls", payload).get("data") or {}
+        return self._put_retry(f"/api/v1/tasks/{source_id}/hls", payload)
 
     def put_result(self, source_id: str, payload: dict) -> dict:
-        return self._json("PUT", f"/api/v1/tasks/{source_id}/result", payload).get("data") or {}
+        return self._put_retry(f"/api/v1/tasks/{source_id}/result", payload)
 
     def artifact_url(self, source_id: str) -> str | None:
         """R2 暂存对象的预签名直链（302 的 Location）；任务无 r2_key 时返回 None。"""

@@ -21,8 +21,8 @@ def test_playlist_matches_design_sample():
     assert "#EXT-X-TARGETDURATION:7" in lines
     # 每分片两行：EXTINF + 内嵌引用；seq 三位零填充
     assert "#EXTINF:6.006," in lines
-    assert "/dl/seg/01JFILE/000.ts?fid=AAA1&sz=100" in lines
-    assert "/dl/seg/01JFILE/001.ts?fid=BBB2&sz=101" in lines
+    assert "000.ts" in lines
+    assert "001.ts" in lines
 
 
 def test_playlist_targetduration_is_ceiling():
@@ -34,14 +34,15 @@ def test_playlist_targetduration_is_ceiling():
 def test_playlist_seq_is_three_digit_zero_padded():
     segs = [_seg(32, "F32", 1, 2.0)]
     text = build_playlist(segs, "X")
-    assert "/dl/seg/X/032.ts?fid=F32&sz=1" in text
+    assert "032.ts" in text
 
 
-def test_playlist_absolute_path_reference():
+def test_playlist_relative_path_reference():
     segs = [_seg(0, "F", 1, 2.0)]
     text = build_playlist(segs, "X")
-    # 绝对路径引用，不依赖 m3u8 自身 URL 形状
-    assert "/dl/seg/X/000.ts?fid=F&sz=1" in text
+    # PLAN-012: 相对路径，由 /hls/<id>/index.m3u8 所在目录解析
+    assert "000.ts" in text
+    assert "/dl/seg/" not in text
     assert "http" not in text
 
 
@@ -64,9 +65,11 @@ def test_playlist_omits_bot_slot_for_main_bot():
     assert "&b=" not in build_playlist(segs, "X")
 
 
-def test_playlist_appends_bot_slot_for_helper_bot():
+def test_playlist_has_no_query_for_helper_bot():
     segs = [{"seq": 0, "tg_file_id": "F", "size": 1, "duration": 2.0, "bot_slot": 3}]
-    assert "/dl/seg/X/000.ts?fid=F&sz=1&b=3" in build_playlist(segs, "X")
+    text = build_playlist(segs, "X")
+    assert "000.ts" in text
+    assert "?fid=" not in text
 
 
 def test_segment_rows_keeps_bot_slot():
@@ -74,9 +77,11 @@ def test_segment_rows_keeps_bot_slot():
     assert rows[0]["bot_slot"] == 4
 
 
-def test_playlist_appends_mid_after_bot_slot():
+def test_playlist_has_no_mid_query():
     segs = [{"seq": 0, "tg_file_id": "F", "size": 1, "duration": 2.0, "bot_slot": 3, "mid": 5501}]
-    assert "/dl/seg/X/000.ts?fid=F&sz=1&b=3&mid=5501" in build_playlist(segs, "X")
+    text = build_playlist(segs, "X")
+    assert "000.ts" in text
+    assert "mid=" not in text
 
 
 def test_segment_rows_keeps_mid():

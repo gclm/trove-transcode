@@ -126,17 +126,30 @@ def process(client: api.TroveApi, source_id: str, chat_id: str, meta: dict | Non
             client.patch(source_id, status="uploading")
             kind = _kind_of(mime)
             mid = tg.mtproto_upload(local, chat_id, caption=f"[Trove] {name} · 原档", filename=archive_name, token=upload_token, thread_id=tg.topics()[kind])
-            client.put_result(source_id, {
-                "tg_mid": mid,
-                "name": name,
-                "size": size,
-                "mime": mime,
-                "kind": kind,
-                "folder_id": info.get("folder_id"),
-                "source_site": source_site,
-                "source_tag": source_tag,
-                **metadata,
-            })
+            batch_id = uuid7()
+            try:
+                client.put_result(source_id, {
+                    "tg_mid": mid,
+                    "batch_id": batch_id,
+                    "name": name,
+                    "size": size,
+                    "mime": mime,
+                    "kind": kind,
+                    "folder_id": info.get("folder_id"),
+                    "source_site": source_site,
+                    "source_tag": source_tag,
+                    **metadata,
+                })
+            except Exception as e:  # noqa: BLE001 - compensate the orphaned TG message
+                try:
+                    tg.bot_delete_messages(chat_id, [mid], token=upload_token)
+                except Exception:  # noqa: BLE001 - best effort cleanup
+                    pass
+                try:
+                    client.patch(source_id, status="error", error_code="register_failed", error_message=str(e)[:300])
+                except Exception:  # noqa: BLE001
+                    pass
+                raise
         print(json.dumps({"ok": True, "source_id": source_id, "size": size}, ensure_ascii=False))
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
@@ -145,6 +158,7 @@ def process(client: api.TroveApi, source_id: str, chat_id: str, meta: dict | Non
 def _upload_hls(client: api.TroveApi, source_id: str, local: str, workdir: str, name: str, file_name: str, mime: str, size: int, probe: dict, chat_id: str, info_folder: str | None = None, upload_token: str | None = None, upload_slot: int = 0, folder_name: str | None = None, source_site: str | None = None, source_tag: str | None = None, metadata: dict | None = None) -> None:
     client.patch(source_id, status="transcoding")
     file_id = uuid7()
+    batch_id = uuid7()
     segdir = os.path.join(workdir, "hls")
     parts = transcode.transcode_to_hls(local, segdir, "seg", probe)
 
@@ -162,8 +176,11 @@ def _upload_hls(client: api.TroveApi, source_id: str, local: str, workdir: str, 
         tg.mtproto_upload, local, chat_id, f"[Trove] {name} · 原档", 6, file_name,
         upload_token, topics["video"], probe, poster_path if has_poster else None,
     )
+    # 本次上传已产生的消息 id：任何后续步骤失败都按这个清单回收，保证 TG 无孤儿。
+    uploaded_mids: list[int] = []
     try:
         receipts = tg.bot_send_media_group(seg_paths, chat_id, token=upload_token, thread_id=topics["segments"])
+        uploaded_mids.extend(int(r["message_id"]) for r in receipts)
         if len(receipts) != len(seg_paths):
             raise RuntimeError(f"segment upload mismatch: {len(receipts)}/{len(seg_paths)}")
         segments = transcode.segment_rows(
@@ -181,6 +198,7 @@ def _upload_hls(client: api.TroveApi, source_id: str, local: str, workdir: str, 
             fh.write(playlist)
         # 原档先落库拿到 tg_mid；playlist 作为它的回复消息发到 video 话题。
         tg_mid = original.result()
+        uploaded_mids.append(int(tg_mid))
         playlist_receipt = tg.bot_send_document(
             playlist_path, chat_id,
             filename=f"{os.path.splitext(file_name)[0]}.m3u8",
@@ -193,31 +211,59 @@ def _upload_hls(client: api.TroveApi, source_id: str, local: str, workdir: str, 
         m3u8_mid = playlist_receipt.get("message_id")
         if not m3u8_file_id:
             raise RuntimeError("playlist upload returned no file_id")
+        uploaded_mids.append(int(m3u8_mid))
 
         poster_file_id = None
+        poster_mid = None
         if has_poster:
-            poster_file_id = tg.bot_send_photo(poster_path, chat_id, caption=f"[Trove] {name} · 封面", thread_id=topics["image"]).get("file_id")
+            poster_receipt = tg.bot_send_photo(poster_path, chat_id, caption=f"[Trove] {name} · 封面", thread_id=topics["image"])
+            poster_file_id = poster_receipt.get("file_id")
+            poster_mid = poster_receipt.get("message_id")
+            if poster_mid:
+                uploaded_mids.append(int(poster_mid))
+
+        payload = {
+            "file_id": file_id,
+            "batch_id": batch_id,
+            "tg_mid": tg_mid,
+            "m3u8_file_id": m3u8_file_id,
+            "m3u8_mid": m3u8_mid,
+            "m3u8_bot_slot": upload_slot,
+            "duration_s": round(probe["duration"]) or transcode.playlist_stats(segments)["duration_s"],
+            "height": probe["height"],
+            "codec": probe["video_codec"],
+            "poster_file_id": poster_file_id,
+            "poster_mid": poster_mid,
+            "segment_mids": [int(seg["mid"]) for seg in segments],
+            "playlist": playlist,
+            "name": name,
+            "size": size,
+            "mime": mime or "video/mp4",
+            "folder_id": info_folder,
+            "source_site": source_site,
+            "source_tag": source_tag,
+            **(metadata or {}),
+        }
+        client.put_hls(source_id, payload)
+    except Exception as e:  # noqa: BLE001 - compensate the whole upload batch
+        try:
+            # The original upload may have finished after the failing step.
+            mid = original.result()
+            if mid and int(mid) not in uploaded_mids:
+                uploaded_mids.append(int(mid))
+        except Exception:  # noqa: BLE001 - original upload itself failed
+            pass
+        try:
+            tg.bot_delete_messages(chat_id, uploaded_mids, token=upload_token)
+        except Exception:  # noqa: BLE001 - best effort cleanup
+            pass
+        try:
+            client.patch(source_id, status="error", error_code="register_failed", error_message=str(e)[:300])
+        except Exception:  # noqa: BLE001
+            pass
+        raise
     finally:
         pool.shutdown(wait=True)
-
-    client.put_hls(source_id, {
-        "file_id": file_id,
-        "tg_mid": tg_mid,
-        "m3u8_file_id": m3u8_file_id,
-        "m3u8_mid": m3u8_mid,
-        "m3u8_bot_slot": upload_slot,
-        "duration_s": round(probe["duration"]) or transcode.playlist_stats(segments)["duration_s"],
-        "height": probe["height"],
-        "codec": probe["video_codec"],
-        "poster_file_id": poster_file_id,
-        "name": name,
-        "size": size,
-        "mime": mime or "video/mp4",
-        "folder_id": info_folder,
-        "source_site": source_site,
-        "source_tag": source_tag,
-        **(metadata or {}),
-    })
 
 def main() -> int:
     api.env_or_die(CORE)
