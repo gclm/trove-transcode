@@ -18,8 +18,8 @@ import httpx
 from .common import BROWSER_UA, ResolveError, parse_hms
 
 SITE = "91porn"
-# 2026-11-05 起 91porn 主站切到该镜像；旧 91porn.com 仅做兼容识别。
-BASE_URL = os.environ.get("SITE_91PORN_BASE", "https://903.9p234.com").rstrip("/")
+# 默认入口用 91porn.com；镜像域名可用 SITE_91PORN_BASE 覆盖（2026-11-06 起镜像对 GitHub runner 403）。
+BASE_URL = os.environ.get("SITE_91PORN_BASE", "https://91porn.com").rstrip("/")
 ENTRY_URL = f"{BASE_URL}/view_video.php?viewkey={{vid}}"
 
 
