@@ -19,7 +19,10 @@ from workers.scheduled.collect91.shards import shard_items  # noqa: E402
 
 CORE = ["API_BASE", "TROVE_API_KEY"]
 HOT_LIMIT = int(os.environ.get("COLLECT_LIMIT", "72"))
+COLLECT_PAGES = int(os.environ.get("COLLECT_PAGES", "3"))
+COLLECT_CATEGORY = os.environ.get("COLLECT_CATEGORY", "tf")
 FOLDER_NAME = os.environ.get("COLLECT_FOLDER", "91porn")
+SOURCE_TAG = {"tf": "本月收藏", "hot": "当前最热"}.get(COLLECT_CATEGORY, COLLECT_CATEGORY)
 # 6 个上传 bot 配置好后设为 "0,1,2,3,4,5"；默认只用主 bot，避免未配置的槽位失败。
 BOT_SLOTS = [int(x) for x in os.environ.get("COLLECT_BOT_SLOTS", "0").split(",") if x.strip()]
 _91 = importlib.import_module("packages.sites.91porn")
@@ -42,7 +45,11 @@ def main() -> int:
     client = api.TroveApi(os.environ["API_BASE"], os.environ["TROVE_API_KEY"])
     config.bootstrap(client)
 
-    keys = _91.list_hot(cookie=os.environ.get("PORN91_COOKIE"), limit=HOT_LIMIT)
+    cookie = os.environ.get("PORN91_COOKIE")
+    # 入口动态探测：91porn.com 不通时自动切镜像，反之亦然。
+    base = _91.pick_base_sync(cookie=cookie, category=COLLECT_CATEGORY)
+    print(f"collect base={base} category={COLLECT_CATEGORY} pages={COLLECT_PAGES}", file=sys.stderr)
+    keys = _91.list_category(base, category=COLLECT_CATEGORY, cookie=cookie, limit=HOT_LIMIT, pages=COLLECT_PAGES)
     if not keys:
         print("[]")
         return 0
@@ -50,9 +57,9 @@ def main() -> int:
     # 一次 batch 建任务：服务端按 stored/in_flight/请求内重复去重，返回 created/skipped。
     items = []
     for key in keys:
-        entry = _91.entry_from_key(key)
+        entry = _91.entry_from_key(key, base=base)
         if entry:
-            items.append({"url": entry, "external_key": key, "source_site": "91porn", "source_tag": "当前最热"})
+            items.append({"url": entry, "external_key": key, "source_site": "91porn", "source_tag": SOURCE_TAG})
     if not items:
         print("[]")
         return 0

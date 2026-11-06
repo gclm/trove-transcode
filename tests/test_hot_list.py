@@ -47,3 +47,44 @@ def test_list_hot_raises_when_empty(monkeypatch):
     with pytest.raises(Exception) as ei:
         _91.list_hot(limit=72, pages=3)
     assert getattr(ei.value, "code", "") == "blocked"
+
+
+def test_base_candidates_override_first_and_dedupes(monkeypatch):
+    monkeypatch.setenv("SITE_91PORN_BASE", "https://903.9p234.com")
+    bases = _91.base_candidates()
+    assert bases[0] == "https://903.9p234.com"
+    assert len(bases) == len(set(bases))
+
+
+def test_list_category_dedupes_across_pages(monkeypatch):
+    calls = []
+
+    async def fake(base, category, page, cookie):
+        calls.append((base, category, page))
+        return (
+            "<a href='view_video.php?viewkey=aaa'>1</a>"
+            "<a href='view_video.php?viewkey=aaa'>dup</a>"
+            f"<a href='view_video.php?viewkey=p{page}'>2</a>"
+        )
+
+    monkeypatch.setattr(_91, "_fetch_list_page", fake)
+    keys = _91.list_category("https://91porn.com", category="tf", limit=10, pages=3)
+    assert calls == [
+        ("https://91porn.com", "tf", 1),
+        ("https://91porn.com", "tf", 2),
+        ("https://91porn.com", "tf", 3),
+    ]
+    assert keys == ["91porn:viewkey=aaa", "91porn:viewkey=p1", "91porn:viewkey=p2", "91porn:viewkey=p3"]
+
+
+def test_pick_base_falls_back_to_mirror(monkeypatch):
+    import types
+    import lib.web
+
+    async def fake_fetch(url, **kwargs):
+        if "903.9p234.com" in url:
+            return types.SimpleNamespace(status_code=200, text="<a href='view_video.php?viewkey=ok'>x</a>")
+        return types.SimpleNamespace(status_code=403, text="blocked")
+
+    monkeypatch.setattr(lib.web, "fetch_page", fake_fetch)
+    assert _91.pick_base_sync(category="tf") == "https://903.9p234.com"

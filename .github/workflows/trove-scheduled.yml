@@ -40,9 +40,10 @@ jobs:
           API_BASE: ${{ secrets.TROVE_API_BASE }}
           TROVE_API_KEY: ${{ secrets.TROVE_API_KEY }}
           COLLECT_LIMIT: ${{ github.event.inputs.limit || '72' }}
+          COLLECT_CATEGORY: tf
+          COLLECT_PAGES: "3"
           COLLECT_BOT_SLOTS: ${{ vars.COLLECT_BOT_SLOTS || '0' }}
           COLLECT_SUMMARY_PATH: collect-summary.json
-          SITE_91PORN_BASE: https://91porn.com
         run: |
           python workers/scheduled/collect91/job.py > shards.json
           cat shards.json
@@ -84,7 +85,6 @@ jobs:
           SHARD: ${{ toJson(matrix.shard) }}
           API_BASE: ${{ secrets.TROVE_API_BASE }}
           TROVE_API_KEY: ${{ secrets.TROVE_API_KEY }}
-          SITE_91PORN_BASE: https://91porn.com
         run: |
           set -o pipefail
           python workers/scheduled/collect91/pipeline.py | tee pipeline.log

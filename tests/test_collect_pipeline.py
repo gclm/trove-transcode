@@ -43,8 +43,9 @@ def test_collect_calls_batch_once_and_emits_6_slots(monkeypatch, capsys):
     keys = [f"91porn:viewkey={i:05d}" for i in range(72)]
     fake = FakeCollectClient()
     monkeypatch.setattr(collect_job, "_91", type("S", (), {
-        "list_hot": staticmethod(lambda **kwargs: keys),
-        "entry_from_key": staticmethod(lambda key: f"https://example/{key}"),
+        "pick_base_sync": staticmethod(lambda **kwargs: "https://91porn.com"),
+        "list_category": staticmethod(lambda base, **kwargs: keys),
+        "entry_from_key": staticmethod(lambda key, base=None: f"https://example/{key}"),
     }))
     monkeypatch.setattr(collect_job.api, "TroveApi", lambda base, key: fake)
     monkeypatch.setenv("API_BASE", "http://test")
